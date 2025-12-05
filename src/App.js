@@ -21,7 +21,6 @@ import {
   deleteDoc,
   getDocs,
   writeBatch,
-  runTransaction,
 } from "firebase/firestore";
 
 // --- Icon Components (Inline SVGs) ---
@@ -67,7 +66,7 @@ const TrophyIcon = (props) => (
   </svg>
 );
 
-const QrCodeIcon = (props) => (
+const PinIcon = (props) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width="24"
@@ -80,18 +79,8 @@ const QrCodeIcon = (props) => (
     strokeLinejoin="round"
     {...props}
   >
-    <rect width="5" height="5" x="3" y="3" rx="1" />
-    <rect width="5" height="5" x="16" y="3" rx="1" />
-    <rect width="5" height="5" x="3" y="16" rx="1" />
-    <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
-    <path d="M21 21v.01" />
-    <path d="M12 7v3a2 2 0 0 1-2 2H7" />
-    <path d="M3 12h.01" />
-    <path d="M12 3h.01" />
-    <path d="M12 16v.01" />
-    <path d="M16 12h1" />
-    <path d="M21 12v.01" />
-    <path d="M12 21v-1" />
+    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+    <circle cx="12" cy="10" r="3" />
   </svg>
 );
 
@@ -332,26 +321,42 @@ const ArrowLeftIcon = (props) => (
   </svg>
 );
 
+const GpsIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M12 2v20" />
+    <path d="M2 12h20" />
+    <circle cx="12" cy="12" r="7" />
+    <circle cx="12" cy="12" r="2" />
+  </svg>
+);
+
 // --- Configuration & Constants ---
 
 // Default Checkpoints (Used on first run or reset)
 const DEFAULT_CHECKPOINTS = [
-  { id: "cp1", name: "Start Line", points: 10 },
-  { id: "cp2", name: "The Old Oak", points: 20 },
-  { id: "cp3", name: "River Bend", points: 30 },
-  { id: "cp4", name: "Hidden Cave", points: 50 },
-  { id: "cp5", name: "Top of Hill", points: 40 },
-  { id: "cp6", name: "Red Barn", points: 25 },
-  { id: "cp7", name: "Bridge Underpass", points: 35 },
-  { id: "cp8", name: "Statue", points: 15 },
-  { id: "cp9", name: "Fountain", points: 20 },
-  { id: "cp10", name: "Finish Line", points: 100 },
+  { id: "cp1", name: "Start Line", points: 10, lat: 0, lng: 0 },
+  { id: "cp2", name: "The Old Oak", points: 20, lat: 0, lng: 0 },
+  { id: "cp3", name: "River Bend", points: 30, lat: 0, lng: 0 },
+  { id: "cp4", name: "Hidden Cave", points: 50, lat: 0, lng: 0 },
+  { id: "cp5", name: "Top of Hill", points: 40, lat: 0, lng: 0 },
 ];
 
 const COLLECTION_NAME = "orienteering_teams";
 const CONFIG_COLLECTION_NAME = "config_teams";
 const CONFIG_DOC_ID = "teams_list";
 const CHECKPOINTS_DOC_ID = "checkpoints_list";
+const GPS_RADIUS_METERS = 30; // 30 meters accuracy tolerance
 
 const firebaseConfig = {
   apiKey: "AIzaSyDG9CWHAw5fGYiBfqOkBfjaSWxvrYKmHxE",
@@ -375,6 +380,22 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
 
+// --- Geolocation Helper ---
+function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // metres
+  const φ1 = (lat1 * Math.PI) / 180; // φ, λ in radians
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
 
@@ -385,29 +406,33 @@ export default function App() {
   const [isRegistered, setIsRegistered] = useState(false);
 
   // -- State: Data --
-  const [teamName, setTeamName] = useState(""); // Holds the active team name
+  const [teamName, setTeamName] = useState("");
   const [availableTeams, setAvailableTeams] = useState([]);
-  const [teams, setTeams] = useState([]); // Leaderboard
-  const [checkpoints, setCheckpoints] = useState([]); // Dynamic checkpoints
+  const [teams, setTeams] = useState([]);
+  const [checkpoints, setCheckpoints] = useState([]);
   const [myTeamData, setMyTeamData] = useState(null);
 
   // -- State: UI --
   const [activeTab, setActiveTab] = useState("game");
-  const [scanResult, setScanResult] = useState(null);
+  const [scanResult, setScanResult] = useState(null); // { status, message, points }
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
   const [loginError, setLoginError] = useState("");
-  const [selectedTeamDetail, setSelectedTeamDetail] = useState(null); // For detailed view
+  const [selectedTeamDetail, setSelectedTeamDetail] = useState(null);
+  const [gpsLoadingId, setGpsLoadingId] = useState(null); // Which button is spinning
 
   // -- State: Admin --
   const [newTeamName, setNewTeamName] = useState("");
   const [showResetInput, setShowResetInput] = useState(false);
   const [resetPasswordInput, setResetPasswordInput] = useState("");
-  const [editingCpId, setEditingCpId] = useState(null); // Which CP is being edited
+  const [editingCpId, setEditingCpId] = useState(null);
+  // Admin form
   const [editCpName, setEditCpName] = useState("");
   const [editCpPoints, setEditCpPoints] = useState("");
+  const [editCpLat, setEditCpLat] = useState("");
+  const [editCpLng, setEditCpLng] = useState("");
 
-  // Inject Tailwind CSS
+  // Inject Tailwind
   useEffect(() => {
     const existingScript = document.getElementById("tailwind-script");
     if (!existingScript) {
@@ -418,7 +443,7 @@ export default function App() {
     }
   }, []);
 
-  // 1. Initial Authentication
+  // 1. Auth
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -452,11 +477,11 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Data Synchronization
+  // 2. Data Sync
   useEffect(() => {
     if (!user) return;
 
-    // A. Available Teams Config
+    // Config Teams
     const configRef = doc(
       db,
       "artifacts",
@@ -480,7 +505,7 @@ export default function App() {
       }
     });
 
-    // B. Checkpoints Config
+    // Config Checkpoints
     const cpConfigRef = doc(
       db,
       "artifacts",
@@ -501,7 +526,7 @@ export default function App() {
       if (!isRegistered) setLoading(false);
     });
 
-    // C. Leaderboard & My Team Data
+    // Leaderboard
     const teamsRef = collection(
       db,
       "artifacts",
@@ -517,7 +542,6 @@ export default function App() {
       snapshot.forEach((doc) => {
         const data = doc.data();
         loadedTeams.push({ id: doc.id, ...data });
-        // Match based on Team Name (ID) instead of User UID
         if (doc.id === teamName) {
           myData = data;
         }
@@ -537,109 +561,121 @@ export default function App() {
     };
   }, [user, isRegistered, teamName]);
 
-  // 3. QR Code Handling
-  useEffect(() => {
-    if (
-      !user ||
-      !isRegistered ||
-      isOrganizer ||
-      !myTeamData ||
-      checkpoints.length === 0
-    )
-      return;
-
-    const params = new URLSearchParams(window.location.search);
-    const cpId = params.get("cp");
-
-    if (cpId) {
-      handleCheckpointScan(cpId);
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, [user, isRegistered, isOrganizer, myTeamData, checkpoints]);
-
   // --- Handlers ---
 
-  const handleCheckpointScan = async (cpId) => {
-    // Find checkpoint in dynamic state list
-    const checkpoint = checkpoints.find((c) => c.id === cpId);
+  const handleGpsCheckIn = async (cpId) => {
+    setGpsLoadingId(cpId);
 
+    // 1. Get Checkpoint Data
+    const checkpoint = checkpoints.find((c) => c.id === cpId);
     if (!checkpoint) {
-      setScanResult({
-        status: "error",
-        message: "Invalid or removed QR Code.",
-      });
+      setScanResult({ status: "error", message: "Checkpoint not found." });
+      setGpsLoadingId(null);
       return;
     }
 
     if (myTeamData && myTeamData.scanned && myTeamData.scanned.includes(cpId)) {
-      setScanResult({
-        status: "error",
-        message: `Already found ${checkpoint.name}!`,
-      });
+      setScanResult({ status: "error", message: `Already checked in here!` });
+      setGpsLoadingId(null);
       return;
     }
 
-    try {
-      const teamRef = doc(
-        db,
-        "artifacts",
-        appId,
-        "public",
-        "data",
-        COLLECTION_NAME,
-        teamName
-      );
-      const pointsToAdd = parseInt(checkpoint.points, 10) || 0;
-      const timestamp = new Date().toISOString();
-      const scanEntry = {
-        id: cpId,
-        name: checkpoint.name,
-        points: pointsToAdd,
-        timestamp: timestamp,
-      };
-
-      await runTransaction(db, async (transaction) => {
-        const teamDoc = await transaction.get(teamRef);
-        if (!teamDoc.exists()) {
-          throw "Team does not exist";
-        }
-
-        const data = teamDoc.data();
-        const scannedList = data.scanned || [];
-
-        if (scannedList.includes(cpId)) {
-          throw "Already scanned";
-        }
-
-        const newScore = (data.score || 0) + pointsToAdd;
-
-        transaction.update(teamRef, {
-          score: newScore,
-          scanned: arrayUnion(cpId),
-          scanHistory: arrayUnion(scanEntry),
-          lastUpdated: new Date(),
-        });
-      });
-
+    if (!checkpoint.lat || !checkpoint.lng) {
       setScanResult({
-        status: "success",
-        message: `Discovered ${checkpoint.name}`,
-        points: pointsToAdd,
+        status: "error",
+        message: "This checkpoint has no GPS coordinates set.",
       });
-    } catch (error) {
-      if (error === "Already scanned") {
-        setScanResult({
-          status: "error",
-          message: `Already found ${checkpoint.name}!`,
-        });
-      } else {
-        console.error("Score update error", error);
-        setScanResult({
-          status: "error",
-          message: "Connection failed. Try again.",
-        });
-      }
+      setGpsLoadingId(null);
+      return;
     }
+
+    // 2. Get User Location
+    if (!navigator.geolocation) {
+      setScanResult({
+        status: "error",
+        message: "Geolocation is not supported by your browser.",
+      });
+      setGpsLoadingId(null);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const userLat = position.coords.latitude;
+        const userLng = position.coords.longitude;
+        const targetLat = parseFloat(checkpoint.lat);
+        const targetLng = parseFloat(checkpoint.lng);
+
+        // 3. Calculate Distance
+        const distance = getDistanceFromLatLonInMeters(
+          userLat,
+          userLng,
+          targetLat,
+          targetLng
+        );
+
+        // 4. Validate
+        if (distance <= GPS_RADIUS_METERS) {
+          // Success!
+          try {
+            const teamRef = doc(
+              db,
+              "artifacts",
+              appId,
+              "public",
+              "data",
+              COLLECTION_NAME,
+              teamName
+            );
+            const pointsToAdd = parseInt(checkpoint.points, 10) || 0;
+            const timestamp = new Date().toISOString();
+            const scanEntry = {
+              id: cpId,
+              name: checkpoint.name,
+              points: pointsToAdd,
+              timestamp: timestamp,
+              method: "GPS",
+            };
+
+            await updateDoc(teamRef, {
+              score: increment(pointsToAdd),
+              scanned: arrayUnion(cpId),
+              scanHistory: arrayUnion(scanEntry),
+              lastUpdated: new Date(),
+            });
+            setScanResult({
+              status: "success",
+              message: `Checked in at ${checkpoint.name}!`,
+              points: pointsToAdd,
+            });
+          } catch (error) {
+            console.error("DB Error", error);
+            setScanResult({
+              status: "error",
+              message: "Database connection failed.",
+            });
+          }
+        } else {
+          // Too far
+          // Round to nearest 100m for feedback
+          const roundedDist = Math.max(100, Math.round(distance / 100) * 100);
+          setScanResult({
+            status: "error",
+            message: `Too far! You are approx ${roundedDist}m away from the target.`,
+          });
+        }
+        setGpsLoadingId(null);
+      },
+      (error) => {
+        console.error("GPS Error", error);
+        setScanResult({
+          status: "error",
+          message: "Could not get location. Check permissions.",
+        });
+        setGpsLoadingId(null);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   };
 
   const handleLoginSubmit = async (e) => {
@@ -659,7 +695,6 @@ export default function App() {
     } else {
       setLoading(true);
       try {
-        // Use Team Name as the Document ID
         const teamRef = doc(
           db,
           "artifacts",
@@ -669,10 +704,7 @@ export default function App() {
           COLLECTION_NAME,
           selectedIdentity
         );
-
-        // Check if team exists first to prevent overwriting existing progress
         const docSnap = await getDoc(teamRef);
-
         if (!docSnap.exists()) {
           await setDoc(teamRef, {
             name: selectedIdentity,
@@ -682,7 +714,6 @@ export default function App() {
             createdAt: new Date(),
           });
         }
-
         setTeamName(selectedIdentity);
         localStorage.setItem(`orienteering_team_${appId}`, selectedIdentity);
         setIsRegistered(true);
@@ -731,13 +762,16 @@ export default function App() {
     await setDoc(configRef, { names: newNames }, { merge: true });
   };
 
-  // --- New Checkpoint Editing Handlers ---
-
   const handleAddCheckpoint = async () => {
-    const newId = `cp${Date.now()}`; // Simple unique ID based on timestamp
-    const newCp = { id: newId, name: "New Checkpoint", points: 10 };
+    const newId = `cp${Date.now()}`;
+    const newCp = {
+      id: newId,
+      name: "New Checkpoint",
+      points: 10,
+      lat: 0,
+      lng: 0,
+    };
     const newList = [...checkpoints, newCp];
-
     const cpConfigRef = doc(
       db,
       "artifacts",
@@ -749,14 +783,13 @@ export default function App() {
     );
     try {
       await setDoc(cpConfigRef, { list: newList }, { merge: true });
-      startEditingCheckpoint(newCp); // Immediately start editing the new one
+      startEditingCheckpoint(newCp);
     } catch (e) {
       alert("Failed to add checkpoint");
     }
   };
 
   const handleDeleteCheckpoint = async (idToDelete) => {
-    // No browser confirm, execute immediately
     const newList = checkpoints.filter((cp) => cp.id !== idToDelete);
     const cpConfigRef = doc(
       db,
@@ -778,6 +811,8 @@ export default function App() {
     setEditingCpId(cp.id);
     setEditCpName(cp.name);
     setEditCpPoints(cp.points);
+    setEditCpLat(cp.lat || "");
+    setEditCpLng(cp.lng || "");
   };
 
   const saveCheckpoint = async (cpId) => {
@@ -796,6 +831,8 @@ export default function App() {
           ...cp,
           name: editCpName,
           points: parseInt(editCpPoints, 10) || 0,
+          lat: editCpLat,
+          lng: editCpLng,
         };
       }
       return cp;
@@ -819,7 +856,6 @@ export default function App() {
       alert("Incorrect Reset Password");
       return;
     }
-
     setLoading(true);
     try {
       const batch = writeBatch(db);
@@ -848,7 +884,6 @@ export default function App() {
       );
       await setDoc(configRef, { names: ["Team Anderson", "Team Porteous"] });
 
-      // Also reset checkpoints to default
       const cpConfigRef = doc(
         db,
         "artifacts",
@@ -894,8 +929,6 @@ export default function App() {
     }
   };
 
-  // --- Helpers ---
-
   const formatTime = (isoString) => {
     if (!isoString) return "";
     const date = new Date(isoString);
@@ -905,8 +938,6 @@ export default function App() {
       second: "2-digit",
     });
   };
-
-  // --- Render Helpers ---
 
   const getRankStyle = (index) => {
     switch (index) {
@@ -954,20 +985,16 @@ export default function App() {
             alt="Background"
             className="w-full h-full object-cover"
           />
-          {/* Dark Overlay & Blur */}
           <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"></div>
         </div>
 
         <div className="z-10 w-full max-w-sm space-y-8 animate-in fade-in zoom-in-95 duration-700 text-center relative">
-          {/* LOGO SECTION WITH IMAGE BACKGROUND */}
           <div className="inline-flex p-0 rounded-3xl overflow-hidden relative shadow-2xl mb-4 w-24 h-24">
-            {/* Placeholder for the background image of the logo */}
             <img
               src="image.jpg"
               alt="Logo Background"
               className="absolute inset-0 w-full h-full object-cover"
             />
-            {/* Overlay the white compass icon */}
             <div className="relative z-10 w-full h-full flex items-center justify-center bg-black/20">
               <CompassIcon className="w-14 h-14 text-white drop-shadow-md" />
             </div>
@@ -983,7 +1010,7 @@ export default function App() {
           >
             <div className="space-y-2 text-left">
               <label className="text-xs font-bold text-white/80 uppercase tracking-widest ml-1">
-                Select your team name
+                Select Identity
               </label>
               <div className="relative">
                 <select
@@ -1083,7 +1110,6 @@ export default function App() {
 
     return (
       <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col animate-in fade-in zoom-in-95 duration-200">
-        {/* Header */}
         <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl">
           <button
             onClick={() => setSelectedTeamDetail(null)}
@@ -1117,7 +1143,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Timeline */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {sortedHistory.length === 0 ? (
             <div className="text-center text-stone-400 mt-10">
@@ -1126,7 +1151,6 @@ export default function App() {
           ) : (
             sortedHistory.map((scan, index) => (
               <div key={index} className="flex gap-4 relative">
-                {/* Line connecting dots */}
                 {index !== sortedHistory.length - 1 && (
                   <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-stone-200"></div>
                 )}
@@ -1143,6 +1167,11 @@ export default function App() {
                       <div className="text-xs text-stone-400 font-mono mt-1">
                         {formatTime(scan.timestamp)}
                       </div>
+                      {scan.method === "GPS" && (
+                        <div className="text-[10px] text-blue-400 font-bold uppercase mt-1">
+                          GPS Check-in
+                        </div>
+                      )}
                     </div>
                     <div className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-1 rounded-lg">
                       +{scan.points}
@@ -1266,6 +1295,7 @@ export default function App() {
               <div className="absolute left-[27px] top-4 bottom-4 w-0.5 bg-stone-200"></div>
               {checkpoints.map((cp, idx) => {
                 const isScanned = myTeamData?.scanned?.includes(cp.id);
+                const isLoading = gpsLoadingId === cp.id;
                 return (
                   <div
                     key={cp.id}
@@ -1305,9 +1335,14 @@ export default function App() {
                         {isScanned ? (
                           <CheckCircleIcon className="w-5 h-5 text-emerald-500" />
                         ) : (
-                          <div className="text-xs font-bold text-stone-300 bg-stone-50 px-2 py-1 rounded-md">
-                            #{idx + 1}
-                          </div>
+                          <button
+                            onClick={() => handleGpsCheckIn(cp.id)}
+                            disabled={isLoading}
+                            className="text-xs font-bold text-white bg-stone-900 px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-stone-800 transition active:scale-95 disabled:opacity-50"
+                          >
+                            {isLoading ? "Locating..." : "Check In"}
+                            {!isLoading && <GpsIcon className="w-3 h-3" />}
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1325,7 +1360,7 @@ export default function App() {
             {teams.map((team, index) => (
               <div
                 key={team.id}
-                onClick={() => setSelectedTeamDetail(team)} // Click to view details
+                onClick={() => setSelectedTeamDetail(team)}
                 className={`relative flex items-center p-4 rounded-3xl transition-all cursor-pointer hover:bg-stone-50 active:scale-95 ${
                   index < 3 ? "mb-3" : "mb-2"
                 } ${getRankStyle(index)} ${
@@ -1430,35 +1465,51 @@ export default function App() {
                   className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm"
                 >
                   {editingCpId === cp.id ? (
-                    <div className="flex gap-2">
-                      <div className="flex-1 space-y-2">
+                    <div className="flex gap-2 flex-col">
+                      <div className="space-y-2">
                         <input
                           type="text"
                           value={editCpName}
                           onChange={(e) => setEditCpName(e.target.value)}
-                          className="w-full border rounded p-1 text-sm font-bold"
+                          className="w-full border rounded p-2 text-sm font-bold"
                           placeholder="Name"
                         />
-                        <input
-                          type="number"
-                          value={editCpPoints}
-                          onChange={(e) => setEditCpPoints(e.target.value)}
-                          className="w-full border rounded p-1 text-sm"
-                          placeholder="Points"
-                        />
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            value={editCpPoints}
+                            onChange={(e) => setEditCpPoints(e.target.value)}
+                            className="w-1/3 border rounded p-2 text-sm"
+                            placeholder="Pts"
+                          />
+                          <input
+                            type="text"
+                            value={editCpLat}
+                            onChange={(e) => setEditCpLat(e.target.value)}
+                            className="w-1/3 border rounded p-2 text-sm"
+                            placeholder="Lat"
+                          />
+                          <input
+                            type="text"
+                            value={editCpLng}
+                            onChange={(e) => setEditCpLng(e.target.value)}
+                            className="w-1/3 border rounded p-2 text-sm"
+                            placeholder="Lng"
+                          />
+                        </div>
                       </div>
-                      <div className="flex flex-col justify-center gap-2">
-                        <button
-                          onClick={() => saveCheckpoint(cp.id)}
-                          className="bg-emerald-100 text-emerald-700 p-2 rounded-lg"
-                        >
-                          <SaveIcon className="w-4 h-4" />
-                        </button>
+                      <div className="flex justify-end gap-2 mt-2">
                         <button
                           onClick={cancelEdit}
-                          className="bg-stone-100 text-stone-500 p-2 rounded-lg"
+                          className="bg-stone-100 text-stone-500 px-4 py-2 rounded-lg text-xs font-bold"
                         >
-                          <span className="text-xs font-bold">X</span>
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => saveCheckpoint(cp.id)}
+                          className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1"
+                        >
+                          <SaveIcon className="w-3 h-3" /> Save
                         </button>
                       </div>
                     </div>
@@ -1468,8 +1519,17 @@ export default function App() {
                         <div className="font-bold text-stone-700 text-sm">
                           {cp.name}
                         </div>
-                        <div className="text-xs text-stone-400">
-                          {cp.points} Points
+                        <div className="text-xs text-stone-400 flex gap-2">
+                          <span>{cp.points} Pts</span>
+                          {cp.lat && cp.lng ? (
+                            <span className="text-emerald-500 flex items-center gap-0.5">
+                              <GpsIcon className="w-3 h-3" /> GPS Set
+                            </span>
+                          ) : (
+                            <span className="text-orange-400 flex items-center gap-0.5">
+                              <AlertCircleIcon className="w-3 h-3" /> No GPS
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -1537,45 +1597,8 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: CODES (Organizer Only) */}
-        {activeTab === "codes" && isOrganizer && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
-            <div className="bg-blue-50 border border-blue-100 p-5 rounded-3xl text-blue-800 text-sm">
-              <strong>Organizer Mode:</strong> Print these QR codes and place
-              them at locations.
-            </div>
-            {checkpoints.map((cp) => {
-              const currentUrl = window.location.href.split("?")[0];
-              const targetUrl = `${currentUrl}?cp=${cp.id}`;
-              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
-                targetUrl
-              )}`;
-              return (
-                <div
-                  key={cp.id}
-                  className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100 flex flex-col items-center text-center gap-4 break-inside-avoid"
-                >
-                  <div className="text-lg font-black text-stone-800">
-                    {cp.name}
-                  </div>
-                  <div className="p-3 bg-white border-2 border-stone-900 rounded-2xl">
-                    <img
-                      src={qrUrl}
-                      alt={`QR for ${cp.name}`}
-                      className="w-32 h-32"
-                    />
-                  </div>
-                  <div className="inline-block bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full">
-                    Value: {cp.points} Points
-                  </div>
-                  <div className="text-[10px] text-stone-300 font-mono break-all max-w-full">
-                    {targetUrl}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {/* TAB: CODES (Organizer Only) - Keep as fallback? */}
+        {/* We keep this hidden or removed if we are 100% GPS, but I will leave it just in case you need it. */}
       </main>
 
       {/* --- Bottom Navigation --- */}
@@ -1617,7 +1640,6 @@ export default function App() {
               {[
                 { id: "manage", icon: SettingsIcon, label: "Manage" },
                 { id: "leaderboard", icon: TrophyIcon, label: "Ranks" },
-                { id: "codes", icon: QrCodeIcon, label: "Codes" },
               ].map((tab) => {
                 const isActive = activeTab === tab.id;
                 return (
@@ -1648,4 +1670,3 @@ export default function App() {
     </div>
   );
 }
-
