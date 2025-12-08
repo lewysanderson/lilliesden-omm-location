@@ -761,7 +761,7 @@ export default function App() {
         adminPassword: createForm.password,
         backgroundUrl: createForm.bgUrl || "background_image.jpg",
         logoUrl: createForm.logoUrl || "image.jpg",
-        teamsList: ["Team Anderson", "Team Porteous"],
+        teamsList: ["Team A", "Team B"],
         checkpointsList: DEFAULT_CHECKPOINTS,
         createdAt: new Date(),
       });
@@ -1203,7 +1203,7 @@ export default function App() {
         raceCode
       );
       await updateDoc(raceRef, {
-        teamsList: ["Team Anderson", "Team Porteous"],
+        teamsList: ["Team A", "Team B"],
         checkpointsList: DEFAULT_CHECKPOINTS,
       });
 
