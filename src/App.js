@@ -21,9 +21,10 @@ import {
   deleteDoc,
   getDocs,
   writeBatch,
+  runTransaction,
 } from "firebase/firestore";
 
-// --- Icon Components (Inline SVGs) ---
+// --- Icon Components ---
 
 const MapIcon = (props) => (
   <svg
@@ -66,7 +67,7 @@ const TrophyIcon = (props) => (
   </svg>
 );
 
-const PinIcon = (props) => (
+const QrCodeIcon = (props) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width="24"
@@ -79,8 +80,18 @@ const PinIcon = (props) => (
     strokeLinejoin="round"
     {...props}
   >
-    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
-    <circle cx="12" cy="10" r="3" />
+    <rect width="5" height="5" x="3" y="3" rx="1" />
+    <rect width="5" height="5" x="16" y="3" rx="1" />
+    <rect width="5" height="5" x="3" y="16" rx="1" />
+    <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+    <path d="M21 21v.01" />
+    <path d="M12 7v3a2 2 0 0 1-2 2H7" />
+    <path d="M3 12h.01" />
+    <path d="M12 3h.01" />
+    <path d="M12 16v.01" />
+    <path d="M16 12h1" />
+    <path d="M21 12v.01" />
+    <path d="M12 21v-1" />
   </svg>
 );
 
@@ -341,22 +352,32 @@ const GpsIcon = (props) => (
   </svg>
 );
 
+const FlagIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+    <line x1="4" x2="4" y1="22" y2="15" />
+  </svg>
+);
+
 // --- Configuration & Constants ---
 
-// Default Checkpoints (Used on first run or reset)
 const DEFAULT_CHECKPOINTS = [
   { id: "cp1", name: "Start Line", points: 10, lat: 0, lng: 0 },
   { id: "cp2", name: "The Old Oak", points: 20, lat: 0, lng: 0 },
-  { id: "cp3", name: "River Bend", points: 30, lat: 0, lng: 0 },
-  { id: "cp4", name: "Hidden Cave", points: 50, lat: 0, lng: 0 },
-  { id: "cp5", name: "Top of Hill", points: 40, lat: 0, lng: 0 },
 ];
 
-const COLLECTION_NAME = "orienteering_teams";
-const CONFIG_COLLECTION_NAME = "config_teams";
-const CONFIG_DOC_ID = "teams_list";
-const CHECKPOINTS_DOC_ID = "checkpoints_list";
-const GPS_RADIUS_METERS = 30; // 30 meters accuracy tolerance
+const GPS_RADIUS_METERS = 30; // Check-in radius
 
 const firebaseConfig = {
   apiKey: "AIzaSyDG9CWHAw5fGYiBfqOkBfjaSWxvrYKmHxE",
@@ -368,7 +389,7 @@ const firebaseConfig = {
   measurementId: "G-JEZHG21FJY",
 };
 
-const appName = "lilliesden-orienteering-app-v2";
+const appName = "lilliesden-orienteering-app-v3";
 let app;
 try {
   app = getApp(appName);
@@ -382,8 +403,8 @@ const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
 
 // --- Geolocation Helper ---
 function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371e3; // metres
-  const φ1 = (lat1 * Math.PI) / 180; // φ, λ in radians
+  const R = 6371e3;
+  const φ1 = (lat1 * Math.PI) / 180;
   const φ2 = (lat2 * Math.PI) / 180;
   const Δφ = ((lat2 - lat1) * Math.PI) / 180;
   const Δλ = ((lon2 - lon1) * Math.PI) / 180;
@@ -396,43 +417,56 @@ function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+// Generate random 4-char code
+const generateRaceCode = () =>
+  Math.random().toString(36).substring(2, 6).toUpperCase();
+
 export default function App() {
   const [user, setUser] = useState(null);
 
-  // -- State: Auth & Role --
-  const [selectedIdentity, setSelectedIdentity] = useState("");
-  const [password, setPassword] = useState("");
-  const [isOrganizer, setIsOrganizer] = useState(false);
-  const [isRegistered, setIsRegistered] = useState(false);
+  // -- Global State --
+  const [view, setView] = useState("landing"); // landing, create, join, race
+  const [raceCode, setRaceCode] = useState("");
 
-  // -- State: Data --
+  // -- Race Data State (For active race) --
+  const [raceConfig, setRaceConfig] = useState(null);
   const [teamName, setTeamName] = useState("");
   const [availableTeams, setAvailableTeams] = useState([]);
   const [teams, setTeams] = useState([]);
   const [checkpoints, setCheckpoints] = useState([]);
   const [myTeamData, setMyTeamData] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  // -- State: UI --
-  const [activeTab, setActiveTab] = useState("game");
-  const [scanResult, setScanResult] = useState(null); // { status, message, points }
+  // -- Form States --
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    password: "",
+    bgUrl: "",
+    logoUrl: "",
+  });
+  const [joinCode, setJoinCode] = useState("");
+  const [selectedIdentity, setSelectedIdentity] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(true);
-  const [authError, setAuthError] = useState(null);
-  const [loginError, setLoginError] = useState("");
-  const [selectedTeamDetail, setSelectedTeamDetail] = useState(null);
-  const [gpsLoadingId, setGpsLoadingId] = useState(null); // Which button is spinning
 
-  // -- State: Admin --
+  // -- Game UI State --
+  const [activeTab, setActiveTab] = useState("game");
+  const [scanResult, setScanResult] = useState(null);
+  const [gpsLoadingId, setGpsLoadingId] = useState(null);
+  const [selectedTeamDetail, setSelectedTeamDetail] = useState(null);
+
+  // -- Admin UI State --
   const [newTeamName, setNewTeamName] = useState("");
   const [showResetInput, setShowResetInput] = useState(false);
   const [resetPasswordInput, setResetPasswordInput] = useState("");
   const [editingCpId, setEditingCpId] = useState(null);
-  // Admin form
   const [editCpName, setEditCpName] = useState("");
   const [editCpPoints, setEditCpPoints] = useState("");
   const [editCpLat, setEditCpLat] = useState("");
   const [editCpLng, setEditCpLng] = useState("");
 
-  // Inject Tailwind
+  // Inject Tailwind CSS
   useEffect(() => {
     const existingScript = document.getElementById("tailwind-script");
     if (!existingScript) {
@@ -443,7 +477,7 @@ export default function App() {
     }
   }, []);
 
-  // 1. Auth
+  // 1. Initial Authentication
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -451,7 +485,6 @@ export default function App() {
         await signInAnonymously(auth);
       } catch (err) {
         console.error("Auth failed", err);
-        setAuthError(err.message);
         setLoading(false);
       }
     };
@@ -460,239 +493,178 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        const storedOrg = localStorage.getItem(`orienteering_org_${appId}`);
-        const storedTeam = localStorage.getItem(`orienteering_team_${appId}`);
-
-        if (storedOrg === "true") {
-          setIsOrganizer(true);
-          setIsRegistered(true);
-          setActiveTab("manage");
-        } else if (storedTeam) {
-          setTeamName(storedTeam);
-          setIsRegistered(true);
-          setActiveTab("game");
+        // Attempt to restore session
+        const savedRace = localStorage.getItem(`omm_race_${appId}`);
+        if (savedRace) {
+          setRaceCode(savedRace);
+          loadRace(savedRace);
+        } else {
+          setLoading(false);
         }
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // 2. Data Sync
-  useEffect(() => {
-    if (!user) return;
+  // -- Core Logic: Load Race --
+  const loadRace = async (code) => {
+    setLoading(true);
+    try {
+      const raceRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races",
+        code
+      );
 
-    // Config Teams
-    const configRef = doc(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      CONFIG_COLLECTION_NAME,
-      CONFIG_DOC_ID
-    );
-    const unsubConfig = onSnapshot(configRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setAvailableTeams(data.names || []);
-      } else {
-        setDoc(
-          configRef,
-          { names: ["Team Anderson", "Team Porteous"] },
-          { merge: true }
-        );
-        setAvailableTeams(["Team Anderson", "Team Porteous"]);
-      }
-    });
+      // Listen to Race Config changes
+      const unsubConfig = onSnapshot(raceRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setRaceConfig(data);
+          setAvailableTeams(data.teamsList || []);
+          setCheckpoints(data.checkpointsList || []);
+          setRaceCode(code);
+          setView("race");
+          localStorage.setItem(`omm_race_${appId}`, code);
 
-    // Config Checkpoints
-    const cpConfigRef = doc(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      CONFIG_COLLECTION_NAME,
-      CHECKPOINTS_DOC_ID
-    );
-    const unsubCpConfig = onSnapshot(cpConfigRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setCheckpoints(data.list || DEFAULT_CHECKPOINTS);
-      } else {
-        setDoc(cpConfigRef, { list: DEFAULT_CHECKPOINTS }, { merge: true });
-        setCheckpoints(DEFAULT_CHECKPOINTS);
-      }
-      if (!isRegistered) setLoading(false);
-    });
+          // Restore Team Identity if exists for this race
+          const savedTeam = localStorage.getItem(`omm_team_${code}`);
+          const savedAdmin = localStorage.getItem(`omm_admin_${code}`);
 
-    // Leaderboard
-    const teamsRef = collection(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      COLLECTION_NAME
-    );
-    const unsubTeams = onSnapshot(teamsRef, (snapshot) => {
-      const loadedTeams = [];
-      let myData = null;
-
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        loadedTeams.push({ id: doc.id, ...data });
-        if (doc.id === teamName) {
-          myData = data;
-        }
-      });
-
-      loadedTeams.sort((a, b) => b.score - a.score);
-      setTeams(loadedTeams);
-      setMyTeamData(myData);
-
-      if (isRegistered) setLoading(false);
-    });
-
-    return () => {
-      unsubConfig();
-      unsubCpConfig();
-      unsubTeams();
-    };
-  }, [user, isRegistered, teamName]);
-
-  // --- Handlers ---
-
-  const handleGpsCheckIn = async (cpId) => {
-    setGpsLoadingId(cpId);
-
-    // 1. Get Checkpoint Data
-    const checkpoint = checkpoints.find((c) => c.id === cpId);
-    if (!checkpoint) {
-      setScanResult({ status: "error", message: "Checkpoint not found." });
-      setGpsLoadingId(null);
-      return;
-    }
-
-    if (myTeamData && myTeamData.scanned && myTeamData.scanned.includes(cpId)) {
-      setScanResult({ status: "error", message: `Already checked in here!` });
-      setGpsLoadingId(null);
-      return;
-    }
-
-    if (!checkpoint.lat || !checkpoint.lng) {
-      setScanResult({
-        status: "error",
-        message: "This checkpoint has no GPS coordinates set.",
-      });
-      setGpsLoadingId(null);
-      return;
-    }
-
-    // 2. Get User Location
-    if (!navigator.geolocation) {
-      setScanResult({
-        status: "error",
-        message: "Geolocation is not supported by your browser.",
-      });
-      setGpsLoadingId(null);
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const userLat = position.coords.latitude;
-        const userLng = position.coords.longitude;
-        const targetLat = parseFloat(checkpoint.lat);
-        const targetLng = parseFloat(checkpoint.lng);
-
-        // 3. Calculate Distance
-        const distance = getDistanceFromLatLonInMeters(
-          userLat,
-          userLng,
-          targetLat,
-          targetLng
-        );
-
-        // 4. Validate
-        if (distance <= GPS_RADIUS_METERS) {
-          // Success!
-          try {
-            const teamRef = doc(
-              db,
-              "artifacts",
-              appId,
-              "public",
-              "data",
-              COLLECTION_NAME,
-              teamName
-            );
-            const pointsToAdd = parseInt(checkpoint.points, 10) || 0;
-            const timestamp = new Date().toISOString();
-            const scanEntry = {
-              id: cpId,
-              name: checkpoint.name,
-              points: pointsToAdd,
-              timestamp: timestamp,
-              method: "GPS",
-            };
-
-            await updateDoc(teamRef, {
-              score: increment(pointsToAdd),
-              scanned: arrayUnion(cpId),
-              scanHistory: arrayUnion(scanEntry),
-              lastUpdated: new Date(),
-            });
-            setScanResult({
-              status: "success",
-              message: `Checked in at ${checkpoint.name}!`,
-              points: pointsToAdd,
-            });
-          } catch (error) {
-            console.error("DB Error", error);
-            setScanResult({
-              status: "error",
-              message: "Database connection failed.",
-            });
+          if (savedAdmin === "true") {
+            setIsAdmin(true);
+            setActiveTab("manage");
+          } else if (savedTeam) {
+            setTeamName(savedTeam);
           }
         } else {
-          // Too far
-          // Round to nearest 100m for feedback
-          const roundedDist = Math.max(100, Math.round(distance / 100) * 100);
-          setScanResult({
-            status: "error",
-            message: `Too far! You are approx ${roundedDist}m away from the target.`,
-          });
+          setErrorMsg("Race code not found.");
+          localStorage.removeItem(`omm_race_${appId}`);
+          setView("landing");
         }
-        setGpsLoadingId(null);
-      },
-      (error) => {
-        console.error("GPS Error", error);
-        setScanResult({
-          status: "error",
-          message: "Could not get location. Check permissions.",
+        setLoading(false);
+      });
+
+      // Listen to Teams/Leaderboard
+      const teamsRef = collection(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races",
+        code,
+        "teams"
+      );
+      const unsubTeams = onSnapshot(teamsRef, (snapshot) => {
+        const loadedTeams = [];
+        let myData = null;
+        // Check local storage inside the snapshot callback to ensure we match against current data
+        const currentTeamName = localStorage.getItem(`omm_team_${code}`);
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          loadedTeams.push({ id: doc.id, ...data });
+          if (doc.id === currentTeamName) {
+            myData = data;
+          }
         });
-        setGpsLoadingId(null);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+
+        loadedTeams.sort((a, b) => b.score - a.score);
+        setTeams(loadedTeams);
+        setMyTeamData(myData);
+      });
+
+      return () => {
+        unsubConfig();
+        unsubTeams();
+      };
+    } catch (e) {
+      console.error("Load race error", e);
+      setLoading(false);
+    }
   };
 
-  const handleLoginSubmit = async (e) => {
+  // -- Actions: Create Race --
+  const handleCreateRace = async (e) => {
     e.preventDefault();
-    if (!selectedIdentity) return;
-    setLoginError("");
+    if (!createForm.name || !createForm.password) return;
+    setLoading(true);
+
+    const newCode = generateRaceCode();
+    const raceRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "races",
+      newCode
+    );
+
+    try {
+      await setDoc(raceRef, {
+        raceName: createForm.name,
+        adminPassword: createForm.password,
+        backgroundUrl: createForm.bgUrl || "imageAG.jpg",
+        logoUrl: createForm.logoUrl || "image.jpg",
+        teamsList: ["Team Anderson", "Team Porteous"],
+        checkpointsList: DEFAULT_CHECKPOINTS,
+        createdAt: new Date(),
+      });
+
+      // Auto-join as admin
+      localStorage.setItem(`omm_admin_${newCode}`, "true");
+      await loadRace(newCode); // This sets state and listeners
+    } catch (err) {
+      console.error("Create failed", err);
+      setErrorMsg("Failed to create race. Try again.");
+      setLoading(false);
+    }
+  };
+
+  // -- Actions: Join Race --
+  const handleJoinRace = async (e) => {
+    e.preventDefault();
+    if (!joinCode) return;
+    const code = joinCode.toUpperCase();
+    const raceRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "races",
+      code
+    );
+    const docSnap = await getDoc(raceRef);
+
+    if (docSnap.exists()) {
+      loadRace(code);
+    } else {
+      setErrorMsg("Invalid Race Code");
+    }
+  };
+
+  // -- Actions: Login to Team/Admin (Inside Race) --
+  const handleIdentityLogin = async (e) => {
+    e.preventDefault();
+    setErrorMsg("");
 
     if (selectedIdentity === "Admin") {
-      if (password === "Jasper") {
-        setIsOrganizer(true);
-        setIsRegistered(true);
-        localStorage.setItem(`orienteering_org_${appId}`, "true");
+      if (passwordInput === raceConfig.adminPassword) {
+        setIsAdmin(true);
+        localStorage.setItem(`omm_admin_${raceCode}`, "true");
         setActiveTab("manage");
       } else {
-        setLoginError("Incorrect Password");
+        setErrorMsg("Incorrect Password");
       }
     } else {
+      // Join as Team
       setLoading(true);
       try {
         const teamRef = doc(
@@ -701,7 +673,9 @@ export default function App() {
           appId,
           "public",
           "data",
-          COLLECTION_NAME,
+          "races",
+          raceCode,
+          "teams",
           selectedIdentity
         );
         const docSnap = await getDoc(teamRef);
@@ -715,8 +689,7 @@ export default function App() {
           });
         }
         setTeamName(selectedIdentity);
-        localStorage.setItem(`orienteering_team_${appId}`, selectedIdentity);
-        setIsRegistered(true);
+        localStorage.setItem(`omm_team_${raceCode}`, selectedIdentity);
         setActiveTab("game");
       } catch (err) {
         console.error("Team join error", err);
@@ -726,85 +699,170 @@ export default function App() {
     }
   };
 
+  // -- Actions: GPS Checkin --
+  const handleGpsCheckIn = async (cpId) => {
+    setGpsLoadingId(cpId);
+    const checkpoint = checkpoints.find((c) => c.id === cpId);
+
+    if (!checkpoint || !checkpoint.lat || !checkpoint.lng) {
+      setScanResult({ status: "error", message: "Invalid GPS coordinates." });
+      setGpsLoadingId(null);
+      return;
+    }
+
+    if (myTeamData?.scanned?.includes(cpId)) {
+      setScanResult({ status: "error", message: "Already checked in!" });
+      setGpsLoadingId(null);
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      setScanResult({ status: "error", message: "Geolocation not supported." });
+      setGpsLoadingId(null);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const dist = getDistanceFromLatLonInMeters(
+          position.coords.latitude,
+          position.coords.longitude,
+          parseFloat(checkpoint.lat),
+          parseFloat(checkpoint.lng)
+        );
+
+        if (dist <= GPS_RADIUS_METERS) {
+          try {
+            const teamRef = doc(
+              db,
+              "artifacts",
+              appId,
+              "public",
+              "data",
+              "races",
+              raceCode,
+              "teams",
+              teamName
+            );
+            const points = parseInt(checkpoint.points, 10) || 0;
+            await runTransaction(db, async (t) => {
+              const doc = await t.get(teamRef);
+              if (!doc.exists()) throw "Team missing";
+              if (doc.data().scanned?.includes(cpId)) throw "Already scanned";
+
+              t.update(teamRef, {
+                score: increment(points),
+                scanned: arrayUnion(cpId),
+                scanHistory: arrayUnion({
+                  id: cpId,
+                  name: checkpoint.name,
+                  points: points,
+                  timestamp: new Date().toISOString(),
+                  method: "GPS",
+                }),
+                lastUpdated: new Date(),
+              });
+            });
+            setScanResult({
+              status: "success",
+              message: `Checked in at ${checkpoint.name}!`,
+              points: points,
+            });
+          } catch (err) {
+            if (err !== "Already scanned")
+              setScanResult({ status: "error", message: "Save failed." });
+          }
+        } else {
+          const rounded = Math.max(100, Math.round(dist / 100) * 100);
+          setScanResult({
+            status: "error",
+            message: `Too far! Approx ${rounded}m away.`,
+          });
+        }
+        setGpsLoadingId(null);
+      },
+      (err) => {
+        setScanResult({
+          status: "error",
+          message: "GPS Error. Allow permissions.",
+        });
+        setGpsLoadingId(null);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  // -- Admin Actions --
   const handleAddTeam = async (e) => {
     e.preventDefault();
     if (!newTeamName.trim()) return;
-    const configRef = doc(
+    const raceRef = doc(
       db,
       "artifacts",
       appId,
       "public",
       "data",
-      CONFIG_COLLECTION_NAME,
-      CONFIG_DOC_ID
+      "races",
+      raceCode
     );
-    try {
-      await updateDoc(configRef, {
-        names: arrayUnion(newTeamName.trim()),
-      });
-      setNewTeamName("");
-    } catch (e) {
-      console.error("Add team error", e);
-    }
+    await updateDoc(raceRef, { teamsList: arrayUnion(newTeamName.trim()) });
+    setNewTeamName("");
   };
 
-  const handleDeleteTeam = async (nameToDelete) => {
-    const configRef = doc(
+  const handleDeleteTeam = async (name) => {
+    const raceRef = doc(
       db,
       "artifacts",
       appId,
       "public",
       "data",
-      CONFIG_COLLECTION_NAME,
-      CONFIG_DOC_ID
+      "races",
+      raceCode
     );
-    const newNames = availableTeams.filter((n) => n !== nameToDelete);
-    await setDoc(configRef, { names: newNames }, { merge: true });
+    const newTeams = availableTeams.filter((t) => t !== name);
+    await updateDoc(raceRef, { teamsList: newTeams });
   };
 
-  const handleAddCheckpoint = async () => {
-    const newId = `cp${Date.now()}`;
-    const newCp = {
-      id: newId,
-      name: "New Checkpoint",
-      points: 10,
-      lat: 0,
-      lng: 0,
-    };
-    const newList = [...checkpoints, newCp];
-    const cpConfigRef = doc(
+  const handleUpdateCheckpoint = async () => {
+    const raceRef = doc(
       db,
       "artifacts",
       appId,
       "public",
       "data",
-      CONFIG_COLLECTION_NAME,
-      CHECKPOINTS_DOC_ID
+      "races",
+      raceCode
     );
-    try {
-      await setDoc(cpConfigRef, { list: newList }, { merge: true });
+
+    // Add New
+    if (!editingCpId) {
+      const newCp = {
+        id: `cp${Date.now()}`,
+        name: "New Point",
+        points: 10,
+        lat: 0,
+        lng: 0,
+      };
+      await updateDoc(raceRef, { checkpointsList: [...checkpoints, newCp] });
       startEditingCheckpoint(newCp);
-    } catch (e) {
-      alert("Failed to add checkpoint");
+      return;
     }
-  };
 
-  const handleDeleteCheckpoint = async (idToDelete) => {
-    const newList = checkpoints.filter((cp) => cp.id !== idToDelete);
-    const cpConfigRef = doc(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      CONFIG_COLLECTION_NAME,
-      CHECKPOINTS_DOC_ID
-    );
-    try {
-      await setDoc(cpConfigRef, { list: newList }, { merge: true });
-    } catch (e) {
-      alert("Failed to delete checkpoint");
-    }
+    // Save Edit
+    const newCps = checkpoints.map((cp) => {
+      if (cp.id === editingCpId) {
+        return {
+          ...cp,
+          name: editCpName,
+          points: parseInt(editCpPoints) || 0,
+          lat: editCpLat,
+          lng: editCpLng,
+        };
+      }
+      return cp;
+    });
+    await updateDoc(raceRef, { checkpointsList: newCps });
+    setEditingCpId(null);
   };
 
   const startEditingCheckpoint = (cp) => {
@@ -815,120 +873,40 @@ export default function App() {
     setEditCpLng(cp.lng || "");
   };
 
-  const saveCheckpoint = async (cpId) => {
-    const cpConfigRef = doc(
+  const handleDeleteCheckpoint = async (id) => {
+    const raceRef = doc(
       db,
       "artifacts",
       appId,
       "public",
       "data",
-      CONFIG_COLLECTION_NAME,
-      CHECKPOINTS_DOC_ID
+      "races",
+      raceCode
     );
-    const newCheckpoints = checkpoints.map((cp) => {
-      if (cp.id === cpId) {
-        return {
-          ...cp,
-          name: editCpName,
-          points: parseInt(editCpPoints, 10) || 0,
-          lat: editCpLat,
-          lng: editCpLng,
-        };
-      }
-      return cp;
-    });
-
-    try {
-      await setDoc(cpConfigRef, { list: newCheckpoints }, { merge: true });
-      setEditingCpId(null);
-    } catch (e) {
-      alert("Failed to save checkpoint");
-    }
+    const newCps = checkpoints.filter((c) => c.id !== id);
+    await updateDoc(raceRef, { checkpointsList: newCps });
   };
 
-  const cancelEdit = () => {
-    setEditingCpId(null);
+  // -- Navigation --
+  const handleLogout = () => {
+    localStorage.removeItem(`omm_admin_${raceCode}`);
+    localStorage.removeItem(`omm_team_${raceCode}`);
+    setIsAdmin(false);
+    setTeamName("");
+    setMyTeamData(null);
+    setSelectedIdentity("");
+    setPasswordInput("");
+    setActiveTab("game");
   };
 
-  const handleFactoryReset = async (e) => {
-    e.preventDefault();
-    if (resetPasswordInput !== "reset") {
-      alert("Incorrect Reset Password");
-      return;
-    }
-    setLoading(true);
-    try {
-      const batch = writeBatch(db);
-      const teamsRef = collection(
-        db,
-        "artifacts",
-        appId,
-        "public",
-        "data",
-        COLLECTION_NAME
-      );
-      const snapshot = await getDocs(teamsRef);
-      snapshot.forEach((doc) => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-
-      const configRef = doc(
-        db,
-        "artifacts",
-        appId,
-        "public",
-        "data",
-        CONFIG_COLLECTION_NAME,
-        CONFIG_DOC_ID
-      );
-      await setDoc(configRef, { names: ["Team Anderson", "Team Porteous"] });
-
-      const cpConfigRef = doc(
-        db,
-        "artifacts",
-        appId,
-        "public",
-        "data",
-        CONFIG_COLLECTION_NAME,
-        CHECKPOINTS_DOC_ID
-      );
-      await setDoc(cpConfigRef, { list: DEFAULT_CHECKPOINTS });
-
-      setShowResetInput(false);
-      setResetPasswordInput("");
-      alert("Application Reset Complete.");
-    } catch (err) {
-      console.error("Reset failed", err);
-      alert("Reset failed: " + err.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleExitRace = () => {
+    localStorage.removeItem(`omm_race_${appId}`);
+    handleLogout();
+    setRaceConfig(null);
+    setView("landing");
   };
 
-  const handleLogout = async () => {
-    setLoading(true);
-    try {
-      localStorage.removeItem(`orienteering_org_${appId}`);
-      localStorage.removeItem(`orienteering_team_${appId}`);
-      await signOut(auth);
-      await signInAnonymously(auth);
-
-      setIsOrganizer(false);
-      setIsRegistered(false);
-      setSelectedIdentity("");
-      setPassword("");
-      setMyTeamData(null);
-      setTeamName("");
-      setActiveTab("game");
-      setSelectedTeamDetail(null);
-    } catch (error) {
-      console.error("Logout failed", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // --- Helper: Format Time ---
   const formatTime = (isoString) => {
     if (!isoString) return "";
     const date = new Date(isoString);
@@ -938,6 +916,8 @@ export default function App() {
       second: "2-digit",
     });
   };
+
+  // --- Render Helpers ---
 
   const getRankStyle = (index) => {
     switch (index) {
@@ -959,135 +939,246 @@ export default function App() {
     return <span className="text-sm font-bold opacity-50">{index + 1}</span>;
   };
 
-  // --- Views ---
+  // --- VIEWS ---
 
-  if (loading) {
+  if (loading)
     return (
-      <div className="min-h-screen bg-stone-50 flex flex-col items-center justify-center p-4">
-        <div className="relative">
-          <div className="w-16 h-16 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin"></div>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <MountainIcon className="w-6 h-6 text-emerald-600" />
+      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
+        <MountainIcon className="w-12 h-12 text-emerald-500 animate-bounce" />
+      </div>
+    );
+
+  // 1. LANDING (Global Home)
+  if (view === "landing") {
+    return (
+      <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-6 relative">
+        <div className="z-10 w-full max-w-sm space-y-8 text-center">
+          <div className="inline-flex p-4 rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-600 shadow-2xl mb-4">
+            <CompassIcon className="w-12 h-12 text-white" />
+          </div>
+          <h1 className="text-4xl font-black text-white tracking-tight">
+            OMM Master
+          </h1>
+
+          <div className="space-y-4">
+            <button
+              onClick={() => setView("join")}
+              className="w-full bg-white text-stone-900 font-bold py-4 rounded-2xl shadow-lg flex items-center justify-center gap-2 transform transition active:scale-95"
+            >
+              <NavigationIcon className="w-5 h-5" /> Join Race
+            </button>
+            <button
+              onClick={() => setView("create")}
+              className="w-full bg-stone-800 text-stone-400 font-bold py-4 rounded-2xl border border-stone-700 flex items-center justify-center gap-2 transform transition active:scale-95"
+            >
+              <PlusIcon className="w-5 h-5" /> Set Up New Race
+            </button>
           </div>
         </div>
       </div>
     );
   }
 
-  // --- LOGIN SCREEN ---
-  if (!isRegistered) {
+  // 2. CREATE RACE
+  if (view === "create") {
+    return (
+      <div className="min-h-screen bg-stone-900 p-6 flex flex-col justify-center">
+        <div className="max-w-sm mx-auto w-full space-y-6">
+          <button
+            onClick={() => setView("landing")}
+            className="text-stone-400 flex items-center gap-2 text-sm font-bold"
+          >
+            <ArrowLeftIcon className="w-4 h-4" /> Back
+          </button>
+          <h2 className="text-3xl font-black text-white">Create Race</h2>
+          <form onSubmit={handleCreateRace} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-500 uppercase">
+                Race Name
+              </label>
+              <input
+                className="w-full bg-stone-800 border-stone-700 rounded-xl px-4 py-3 text-white"
+                value={createForm.name}
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, name: e.target.value })
+                }
+                placeholder="e.g. Winter Run"
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-500 uppercase">
+                Admin Password
+              </label>
+              <input
+                className="w-full bg-stone-800 border-stone-700 rounded-xl px-4 py-3 text-white"
+                value={createForm.password}
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, password: e.target.value })
+                }
+                placeholder="Secret Pass"
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-500 uppercase">
+                Background Image URL (Optional)
+              </label>
+              <input
+                className="w-full bg-stone-800 border-stone-700 rounded-xl px-4 py-3 text-white text-xs"
+                value={createForm.bgUrl}
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, bgUrl: e.target.value })
+                }
+                placeholder="https://..."
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-500 uppercase">
+                Logo Image URL (Optional)
+              </label>
+              <input
+                className="w-full bg-stone-800 border-stone-700 rounded-xl px-4 py-3 text-white text-xs"
+                value={createForm.logoUrl}
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, logoUrl: e.target.value })
+                }
+                placeholder="https://..."
+              />
+            </div>
+            {errorMsg && <div className="text-red-400 text-sm">{errorMsg}</div>}
+            <button
+              type="submit"
+              className="w-full bg-emerald-600 text-white font-bold py-4 rounded-xl mt-4"
+            >
+              Create & Launch
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. JOIN RACE
+  if (view === "join") {
+    return (
+      <div className="min-h-screen bg-stone-900 p-6 flex flex-col justify-center">
+        <div className="max-w-sm mx-auto w-full space-y-6 text-center">
+          <button
+            onClick={() => setView("landing")}
+            className="text-stone-400 flex items-center gap-2 text-sm font-bold absolute top-6 left-6"
+          >
+            <ArrowLeftIcon className="w-4 h-4" /> Back
+          </button>
+
+          <h2 className="text-2xl font-bold text-white">Enter Race Code</h2>
+          <input
+            className="w-full bg-stone-800 border-stone-700 rounded-2xl px-6 py-6 text-white text-center text-4xl font-mono tracking-widest uppercase focus:ring-2 focus:ring-emerald-500 outline-none"
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value)}
+            placeholder="ABCD"
+            maxLength={4}
+          />
+          {errorMsg && <div className="text-red-400 text-sm">{errorMsg}</div>}
+          <button
+            onClick={handleJoinRace}
+            className="w-full bg-emerald-600 text-white font-bold py-4 rounded-xl"
+          >
+            Enter Race
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 4. RACE - LOGIN SCREEN (Team Selection)
+  if (!teamName && !isAdmin) {
     return (
       <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        {/* Background Image Layer */}
+        {/* Dynamic Background */}
         <div className="absolute inset-0 z-0">
           <img
-            src="imageAG.jpg"
-            alt="Background"
+            src={raceConfig?.backgroundUrl || "imageAG.jpg"}
+            alt="bg"
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"></div>
         </div>
 
-        <div className="z-10 w-full max-w-sm space-y-8 animate-in fade-in zoom-in-95 duration-700 text-center relative">
+        <div className="z-10 w-full max-w-sm space-y-8 text-center relative">
+          {/* Dynamic Logo */}
           <div className="inline-flex p-0 rounded-3xl overflow-hidden relative shadow-2xl mb-4 w-24 h-24">
             <img
-              src="image.jpg"
-              alt="Logo Background"
+              src={raceConfig?.logoUrl || "image.jpg"}
+              alt="logo"
               className="absolute inset-0 w-full h-full object-cover"
             />
-            <div className="relative z-10 w-full h-full flex items-center justify-center bg-black/20">
-              <CompassIcon className="w-14 h-14 text-white drop-shadow-md" />
+          </div>
+
+          <div className="space-y-1">
+            <h1 className="text-4xl font-black text-white tracking-tight drop-shadow-lg">
+              {raceConfig?.raceName}
+            </h1>
+            <div className="text-white/60 font-mono text-sm tracking-widest">
+              CODE: {raceCode}
             </div>
           </div>
 
-          <h1 className="text-4xl font-black text-white tracking-tight drop-shadow-lg">
-            Lilliesden OMM
-          </h1>
-
           <form
-            onSubmit={handleLoginSubmit}
+            onSubmit={handleIdentityLogin}
             className="space-y-4 pt-4 bg-white/10 p-6 rounded-3xl border border-white/20 backdrop-blur-md shadow-2xl"
           >
             <div className="space-y-2 text-left">
               <label className="text-xs font-bold text-white/80 uppercase tracking-widest ml-1">
-                Select Identity
+                Identity
               </label>
               <div className="relative">
                 <select
                   value={selectedIdentity}
                   onChange={(e) => {
                     setSelectedIdentity(e.target.value);
-                    setPassword("");
-                    setLoginError("");
+                    setPasswordInput("");
+                    setErrorMsg("");
                   }}
                   className="w-full appearance-none bg-stone-900/80 border border-stone-600 text-white px-6 py-4 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-lg"
                 >
                   <option value="" disabled>
-                    -- Choose --
+                    -- Select --
                   </option>
                   <option value="Admin">Admin</option>
-                  <optgroup label="Available Teams">
-                    {availableTeams.map((name) =>
-                      typeof name === "string" ? (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ) : null
-                    )}
+                  <optgroup label="Teams">
+                    {availableTeams.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
                   </optgroup>
                 </select>
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-stone-400">
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M19 9l-7 7-7-7"
-                    ></path>
-                  </svg>
-                </div>
               </div>
             </div>
 
             {selectedIdentity === "Admin" && (
-              <div className="space-y-2 text-left animate-in fade-in slide-in-from-top-2">
-                <label className="text-xs font-bold text-white/80 uppercase tracking-widest ml-1">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-stone-900/80 border border-stone-600 text-white px-6 py-4 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  placeholder="••••••"
-                  autoFocus
-                />
-              </div>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full bg-stone-900/80 border border-stone-600 text-white px-6 py-4 rounded-2xl"
+                placeholder="Password"
+              />
             )}
 
-            {loginError && (
-              <div className="text-red-300 text-sm font-bold text-center bg-red-900/40 py-2 rounded-lg border border-red-500/30">
-                {loginError}
+            {errorMsg && (
+              <div className="text-red-300 text-sm bg-red-900/40 py-2 rounded-lg border border-red-500/30">
+                {errorMsg}
               </div>
             )}
 
             <button
               type="submit"
               disabled={!selectedIdentity}
-              className={`w-full font-bold py-4 rounded-2xl transition flex items-center justify-center gap-2 mt-4 ${
-                selectedIdentity
-                  ? "bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-900/50"
-                  : "bg-stone-800/50 text-stone-500 cursor-not-allowed border border-stone-700"
-              }`}
+              className="w-full bg-emerald-600 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2"
             >
-              {selectedIdentity === "Admin"
-                ? "Access Dashboard"
-                : "Start Adventure"}
+              {selectedIdentity === "Admin" ? "Login" : "Start"}
               {selectedIdentity === "Admin" ? (
                 <LockIcon className="w-4 h-4" />
               ) : (
@@ -1095,6 +1186,13 @@ export default function App() {
               )}
             </button>
           </form>
+
+          <button
+            onClick={handleExitRace}
+            className="text-white/40 text-xs font-bold hover:text-white mt-8"
+          >
+            Exit Race
+          </button>
         </div>
       </div>
     );
@@ -1110,6 +1208,7 @@ export default function App() {
 
     return (
       <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        {/* Header */}
         <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl">
           <button
             onClick={() => setSelectedTeamDetail(null)}
@@ -1143,6 +1242,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* Timeline */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {sortedHistory.length === 0 ? (
             <div className="text-center text-stone-400 mt-10">
@@ -1151,6 +1251,7 @@ export default function App() {
           ) : (
             sortedHistory.map((scan, index) => (
               <div key={index} className="flex gap-4 relative">
+                {/* Line connecting dots */}
                 {index !== sortedHistory.length - 1 && (
                   <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-stone-200"></div>
                 )}
@@ -1186,13 +1287,13 @@ export default function App() {
     );
   }
 
-  // --- APP INTERFACE (Organizer & Participant) ---
+  // --- 5. RACE - MAIN APP ---
   return (
     <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col">
-      {/* --- Overlay Modal (Scan Results) --- */}
+      {/* Overlay: Scan Result */}
       {scanResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl w-full max-w-xs p-6 text-center shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-xs p-6 text-center shadow-2xl">
             <div
               className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${
                 scanResult.status === "success"
@@ -1206,327 +1307,222 @@ export default function App() {
                 <AlertCircleIcon className="w-10 h-10" />
               )}
             </div>
-            <h3 className="text-2xl font-black text-stone-800 mb-1">
+            <h3 className="text-2xl font-black text-stone-800 mb-2">
               {scanResult.status === "success"
                 ? `+${scanResult.points} pts`
-                : "Wait!"}
+                : "Alert"}
             </h3>
-            <p className="text-stone-500 font-medium mb-6 leading-relaxed">
+            <p className="text-stone-500 font-medium mb-6">
               {scanResult.message}
             </p>
             <button
               onClick={() => setScanResult(null)}
-              className="w-full bg-stone-900 text-white font-bold py-4 rounded-2xl hover:bg-stone-800 transition active:scale-95"
+              className="w-full bg-stone-900 text-white font-bold py-4 rounded-2xl"
             >
-              Continue
+              OK
             </button>
           </div>
         </div>
       )}
 
-      {/* --- Header --- */}
+      {/* Header */}
       <div className="bg-white pb-6 pt-4 px-6 rounded-b-[2.5rem] shadow-lg z-10 sticky top-0 border-b border-stone-100">
         <div className="flex justify-between items-start mb-6">
           <div className="flex flex-col">
             <span className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-1">
-              {isOrganizer ? "Organizer Mode" : "Current Team"}
+              {isAdmin ? "Admin Mode" : "Team"}
             </span>
             <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
-              {isOrganizer
-                ? "Admin Dashboard"
-                : myTeamData?.name || selectedIdentity}
-              {!isOrganizer && (
-                <span className="bg-emerald-100 text-emerald-700 text-[10px] px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wide">
-                  Active
-                </span>
-              )}
+              {isAdmin ? "Race Manager" : teamName}
             </h2>
           </div>
-          <button
-            onClick={handleLogout}
-            className="w-10 h-10 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 hover:bg-red-50 hover:text-red-500 transition"
-            title="Logout"
-          >
-            <LockIcon className="w-4 h-4" />
-          </button>
+          <div className="flex gap-2">
+            <div className="px-3 py-1.5 bg-stone-100 rounded-lg text-xs font-mono font-bold text-stone-500">
+              {raceCode}
+            </div>
+            <button
+              onClick={handleLogout}
+              className="w-8 h-8 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 hover:bg-red-50 hover:text-red-500"
+            >
+              <LockIcon className="w-3 h-3" />
+            </button>
+          </div>
         </div>
-
-        {/* Score Card (Only for Players) */}
-        {!isOrganizer && (
-          <div className="bg-stone-900 rounded-3xl p-6 text-white shadow-xl shadow-stone-900/20 relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-10 -mt-10 blur-2xl"></div>
+        {!isAdmin && (
+          <div className="bg-stone-900 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
             <div className="relative z-10 flex justify-between items-end">
               <div>
                 <div className="text-stone-400 text-xs font-bold uppercase tracking-widest mb-1">
-                  Total Score
+                  Score
                 </div>
                 <div className="text-5xl font-black tracking-tighter">
                   {myTeamData?.score || 0}
                 </div>
               </div>
-              <div className="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs font-medium text-stone-300 border border-white/10">
-                {myTeamData?.scanned?.length || 0} / {checkpoints.length} Found
+              <div className="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs font-medium text-stone-300">
+                {myTeamData?.scanned?.length || 0} / {checkpoints.length}
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* --- Main Content --- */}
+      {/* Main Content */}
       <main className="flex-1 overflow-y-auto px-4 pb-32 pt-6 space-y-6">
-        {/* TAB: GAME (Trail) - Participants Only */}
-        {activeTab === "game" && !isOrganizer && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex items-center justify-between mb-4 px-2">
-              <h3 className="font-bold text-stone-800 text-lg">
-                Checkpoint Trail
-              </h3>
-              <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">
-                {Math.round(
-                  ((myTeamData?.scanned?.length || 0) /
-                    Math.max(checkpoints.length, 1)) *
-                    100
-                )}
-                % Complete
-              </span>
-            </div>
-
-            <div className="relative space-y-0 pl-4">
-              <div className="absolute left-[27px] top-4 bottom-4 w-0.5 bg-stone-200"></div>
-              {checkpoints.map((cp, idx) => {
-                const isScanned = myTeamData?.scanned?.includes(cp.id);
-                const isLoading = gpsLoadingId === cp.id;
-                return (
+        {/* Game Tab */}
+        {activeTab === "game" && !isAdmin && (
+          <div className="space-y-4">
+            {checkpoints.map((cp, idx) => {
+              const isScanned = myTeamData?.scanned?.includes(cp.id);
+              return (
+                <div
+                  key={cp.id}
+                  className="relative flex items-center gap-4 py-2"
+                >
                   <div
-                    key={cp.id}
-                    className="relative flex items-center gap-4 py-3 group"
-                  >
-                    <div
-                      className={`relative z-10 flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white transition-all duration-300 ${
-                        isScanned
-                          ? "border-emerald-500 scale-110"
-                          : "border-stone-300"
-                      }`}
-                    >
-                      {isScanned && (
-                        <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>
-                      )}
-                    </div>
-                    <div
-                      className={`flex-1 p-4 rounded-2xl border transition-all duration-300 ${
-                        isScanned
-                          ? "bg-white border-emerald-100 shadow-lg shadow-emerald-500/5"
-                          : "bg-white border-stone-100 shadow-sm opacity-80"
-                      }`}
-                    >
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <div
-                            className={`font-bold text-sm ${
-                              isScanned ? "text-stone-800" : "text-stone-500"
-                            }`}
-                          >
-                            {cp.name}
-                          </div>
-                          <div className="text-xs text-stone-400 font-medium">
-                            {cp.points} Points
-                          </div>
-                        </div>
-                        {isScanned ? (
-                          <CheckCircleIcon className="w-5 h-5 text-emerald-500" />
-                        ) : (
-                          <button
-                            onClick={() => handleGpsCheckIn(cp.id)}
-                            disabled={isLoading}
-                            className="text-xs font-bold text-white bg-stone-900 px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-stone-800 transition active:scale-95 disabled:opacity-50"
-                          >
-                            {isLoading ? "Locating..." : "Check In"}
-                            {!isLoading && <GpsIcon className="w-3 h-3" />}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* TAB: LEADERBOARD (Everyone) */}
-        {activeTab === "leaderboard" && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-4">
-            <h3 className="font-bold text-stone-800 text-lg px-2">Top Teams</h3>
-            {teams.map((team, index) => (
-              <div
-                key={team.id}
-                onClick={() => setSelectedTeamDetail(team)}
-                className={`relative flex items-center p-4 rounded-3xl transition-all cursor-pointer hover:bg-stone-50 active:scale-95 ${
-                  index < 3 ? "mb-3" : "mb-2"
-                } ${getRankStyle(index)} ${
-                  team.id === teamName
-                    ? "shadow-lg scale-[1.02]"
-                    : "bg-white shadow-sm border border-stone-100"
-                }`}
-              >
-                <div className="flex-shrink-0 w-10 h-10 flex items-center justify-center text-xl mr-4">
-                  {getMedalIcon(index)}
-                </div>
-                <div className="flex-1">
-                  <div
-                    className={`font-bold text-sm ${
-                      team.id === teamName ? "text-black" : "text-stone-700"
+                    className={`flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-white ${
+                      isScanned
+                        ? "border-emerald-500 text-emerald-500"
+                        : "border-stone-300 text-stone-300"
                     }`}
                   >
-                    {team.name}
-                    {team.id === teamName && (
-                      <span className="ml-2 text-[10px] bg-stone-900 text-white px-1.5 py-0.5 rounded">
-                        YOU
-                      </span>
+                    {isScanned ? (
+                      <CheckCircleIcon className="w-5 h-5" />
+                    ) : (
+                      <span className="text-xs font-bold">{idx + 1}</span>
                     )}
                   </div>
-                  <div className="text-xs opacity-60 font-medium">
-                    {team.scanned?.length || 0} checkpoints
+                  <div className="flex-1 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-stone-800 text-sm">
+                        {cp.name}
+                      </div>
+                      <div className="text-xs text-stone-400">
+                        {cp.points} pts
+                      </div>
+                    </div>
+                    {!isScanned && (
+                      <button
+                        onClick={() => handleGpsCheckIn(cp.id)}
+                        disabled={gpsLoadingId === cp.id}
+                        className="bg-stone-900 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {gpsLoadingId === cp.id ? "..." : "Check In"}{" "}
+                        <GpsIcon className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 </div>
-                <div className="font-black text-lg">{team.score}</div>
-              </div>
-            ))}
-            {teams.length === 0 && (
-              <div className="p-12 text-center bg-white rounded-3xl border border-dashed border-stone-200 text-stone-400">
-                No explorers yet.
-              </div>
-            )}
+              );
+            })}
           </div>
         )}
 
-        {/* TAB: MANAGE TEAMS (Organizer Only) */}
-        {activeTab === "manage" && isOrganizer && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
-            {/* Add Team */}
-            <div className="bg-stone-900 text-white p-5 rounded-3xl">
-              <h3 className="font-bold text-lg mb-4">Add New Team</h3>
+        {/* Admin Manage Tab */}
+        {activeTab === "manage" && isAdmin && (
+          <div className="space-y-8">
+            {/* Teams */}
+            <div className="space-y-4">
+              <h3 className="font-bold text-stone-800 px-2">Teams</h3>
               <form onSubmit={handleAddTeam} className="flex gap-2">
                 <input
-                  type="text"
-                  placeholder="Team C"
-                  className="flex-1 bg-stone-800 border-none rounded-xl px-4 text-white focus:ring-2 focus:ring-emerald-500"
+                  className="flex-1 bg-white border border-stone-200 rounded-xl px-4 py-3"
+                  placeholder="New Team Name"
                   value={newTeamName}
                   onChange={(e) => setNewTeamName(e.target.value)}
                 />
-                <button
-                  type="submit"
-                  className="bg-emerald-600 text-white p-3 rounded-xl hover:bg-emerald-500"
-                >
+                <button className="bg-stone-900 text-white p-3 rounded-xl">
                   <PlusIcon className="w-5 h-5" />
                 </button>
               </form>
-            </div>
-
-            {/* List Teams */}
-            <div className="space-y-2">
-              <div className="text-xs font-bold text-stone-400 uppercase tracking-widest px-2">
-                Configured Teams
-              </div>
-              {availableTeams.map((name) =>
-                typeof name === "string" ? (
+              <div className="space-y-2">
+                {availableTeams.map((name) => (
                   <div
                     key={name}
-                    className="bg-white p-4 rounded-2xl border border-stone-100 flex justify-between items-center shadow-sm"
+                    className="bg-white p-4 rounded-xl border border-stone-100 flex justify-between items-center"
                   >
                     <span className="font-bold text-stone-700">{name}</span>
                     <button
                       onClick={() => handleDeleteTeam(name)}
-                      className="text-stone-300 hover:text-red-500 transition p-2"
+                      className="text-stone-300 hover:text-red-500"
                     >
                       <TrashIcon className="w-4 h-4" />
                     </button>
                   </div>
-                ) : null
-              )}
+                ))}
+              </div>
             </div>
 
-            {/* Checkpoint Editor (NEW) */}
-            <div className="space-y-2 pt-4">
+            {/* Checkpoints */}
+            <div className="space-y-4">
               <div className="flex justify-between items-center px-2">
-                <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">
-                  Edit Checkpoints
-                </div>
+                <h3 className="font-bold text-stone-800">Checkpoints</h3>
                 <button
-                  onClick={handleAddCheckpoint}
-                  className="bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-emerald-200 transition flex items-center gap-1"
+                  onClick={handleUpdateCheckpoint}
+                  className="text-xs bg-emerald-100 text-emerald-700 font-bold px-3 py-1.5 rounded-lg"
                 >
-                  <PlusIcon className="w-3 h-3" /> Add
+                  Add New
                 </button>
               </div>
               {checkpoints.map((cp) => (
                 <div
                   key={cp.id}
-                  className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm"
+                  className="bg-white p-4 rounded-xl border border-stone-100 shadow-sm space-y-3"
                 >
                   {editingCpId === cp.id ? (
-                    <div className="flex gap-2 flex-col">
-                      <div className="space-y-2">
+                    <div className="space-y-2">
+                      <input
+                        className="w-full border rounded p-2 text-sm"
+                        value={editCpName}
+                        onChange={(e) => setEditCpName(e.target.value)}
+                        placeholder="Name"
+                      />
+                      <div className="flex gap-2">
                         <input
-                          type="text"
-                          value={editCpName}
-                          onChange={(e) => setEditCpName(e.target.value)}
-                          className="w-full border rounded p-2 text-sm font-bold"
-                          placeholder="Name"
+                          className="w-1/3 border rounded p-2 text-sm"
+                          type="number"
+                          value={editCpPoints}
+                          onChange={(e) => setEditCpPoints(e.target.value)}
+                          placeholder="Pts"
                         />
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            value={editCpPoints}
-                            onChange={(e) => setEditCpPoints(e.target.value)}
-                            className="w-1/3 border rounded p-2 text-sm"
-                            placeholder="Pts"
-                          />
-                          <input
-                            type="text"
-                            value={editCpLat}
-                            onChange={(e) => setEditCpLat(e.target.value)}
-                            className="w-1/3 border rounded p-2 text-sm"
-                            placeholder="Lat"
-                          />
-                          <input
-                            type="text"
-                            value={editCpLng}
-                            onChange={(e) => setEditCpLng(e.target.value)}
-                            className="w-1/3 border rounded p-2 text-sm"
-                            placeholder="Lng"
-                          />
-                        </div>
+                        <input
+                          className="w-1/3 border rounded p-2 text-sm"
+                          value={editCpLat}
+                          onChange={(e) => setEditCpLat(e.target.value)}
+                          placeholder="Lat"
+                        />
+                        <input
+                          className="w-1/3 border rounded p-2 text-sm"
+                          value={editCpLng}
+                          onChange={(e) => setEditCpLng(e.target.value)}
+                          placeholder="Lng"
+                        />
                       </div>
-                      <div className="flex justify-end gap-2 mt-2">
+                      <div className="flex justify-end gap-2">
                         <button
-                          onClick={cancelEdit}
-                          className="bg-stone-100 text-stone-500 px-4 py-2 rounded-lg text-xs font-bold"
+                          onClick={() => setEditingCpId(null)}
+                          className="text-xs font-bold text-stone-500"
                         >
                           Cancel
                         </button>
                         <button
-                          onClick={() => saveCheckpoint(cp.id)}
-                          className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1"
+                          onClick={handleUpdateCheckpoint}
+                          className="text-xs font-bold bg-emerald-600 text-white px-3 py-1.5 rounded-lg"
                         >
-                          <SaveIcon className="w-3 h-3" /> Save
+                          Save
                         </button>
                       </div>
                     </div>
                   ) : (
                     <div className="flex justify-between items-center">
                       <div>
-                        <div className="font-bold text-stone-700 text-sm">
+                        <div className="font-bold text-stone-800 text-sm">
                           {cp.name}
                         </div>
-                        <div className="text-xs text-stone-400 flex gap-2">
-                          <span>{cp.points} Pts</span>
-                          {cp.lat && cp.lng ? (
-                            <span className="text-emerald-500 flex items-center gap-0.5">
-                              <GpsIcon className="w-3 h-3" /> GPS Set
-                            </span>
-                          ) : (
-                            <span className="text-orange-400 flex items-center gap-0.5">
+                        <div className="text-xs text-stone-400 flex gap-2 mt-1">
+                          <span>{cp.points} pts</span>
+                          {(!cp.lat || !cp.lng) && (
+                            <span className="text-red-400 flex items-center gap-1">
                               <AlertCircleIcon className="w-3 h-3" /> No GPS
                             </span>
                           )}
@@ -1535,13 +1531,13 @@ export default function App() {
                       <div className="flex gap-2">
                         <button
                           onClick={() => startEditingCheckpoint(cp)}
-                          className="text-emerald-600 bg-emerald-50 p-2 rounded-xl"
+                          className="p-2 bg-stone-50 rounded-lg text-stone-500"
                         >
                           <EditIcon className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleDeleteCheckpoint(cp.id)}
-                          className="text-red-400 bg-red-50 p-2 rounded-xl"
+                          className="p-2 bg-red-50 rounded-lg text-red-400"
                         >
                           <TrashIcon className="w-4 h-4" />
                         </button>
@@ -1551,118 +1547,89 @@ export default function App() {
                 </div>
               ))}
             </div>
-
-            {/* Danger Zone: Reset App */}
-            <div className="mt-8 border-t-2 border-stone-100 pt-6">
-              {!showResetInput ? (
-                <button
-                  onClick={() => setShowResetInput(true)}
-                  className="w-full py-4 text-red-500 font-bold bg-red-50 rounded-2xl border border-red-100 hover:bg-red-100 transition flex items-center justify-center gap-2"
-                >
-                  <RefreshIcon className="w-5 h-5" /> Reset Application
-                </button>
-              ) : (
-                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 animate-in fade-in slide-in-from-bottom-2">
-                  <div className="text-red-800 font-bold text-sm mb-2 text-center">
-                    WARNING: This wipes all data!
-                  </div>
-                  <form onSubmit={handleFactoryReset} className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Type 'reset' to confirm"
-                      value={resetPasswordInput}
-                      onChange={(e) => setResetPasswordInput(e.target.value)}
-                      className="flex-1 px-4 py-3 rounded-xl border border-red-200 text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
-                    />
-                    <button
-                      type="submit"
-                      className="bg-red-600 text-white font-bold px-4 py-3 rounded-xl hover:bg-red-700"
-                    >
-                      Wipe
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowResetInput(false);
-                        setResetPasswordInput("");
-                      }}
-                      className="text-stone-500 px-3 hover:text-stone-700"
-                    >
-                      Cancel
-                    </button>
-                  </form>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
-        {/* TAB: CODES (Organizer Only) - Keep as fallback? */}
-        {/* We keep this hidden or removed if we are 100% GPS, but I will leave it just in case you need it. */}
+        {/* Leaderboard Tab */}
+        {activeTab === "leaderboard" && (
+          <div className="space-y-3">
+            {teams.map((t, idx) => (
+              <div
+                key={t.id}
+                className={`flex items-center p-4 rounded-2xl bg-white border border-stone-100 shadow-sm ${
+                  idx < 3 ? "border-l-4 border-l-yellow-400" : ""
+                }`}
+              >
+                <div className="w-8 text-center font-bold text-stone-400">
+                  {idx + 1}
+                </div>
+                <div className="flex-1">
+                  <div className="font-bold text-stone-800">{t.name}</div>
+                  <div className="text-xs text-stone-400">
+                    {t.scanned?.length || 0} found
+                  </div>
+                </div>
+                <div className="font-black text-lg text-stone-900">
+                  {t.score}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
 
-      {/* --- Bottom Navigation --- */}
+      {/* Navigation */}
       <div className="fixed bottom-6 left-6 right-6 z-40">
-        <div className="bg-white/90 backdrop-blur-xl border border-white/20 p-2 rounded-3xl shadow-2xl shadow-stone-500/20 flex justify-between items-center max-w-sm mx-auto">
-          {!isOrganizer ? (
-            // Participant Tabs
+        <div className="bg-white/90 backdrop-blur-xl border border-white/20 p-2 rounded-3xl shadow-2xl flex justify-between max-w-sm mx-auto">
+          {!isAdmin ? (
             <>
-              {[
-                { id: "game", icon: MapIcon, label: "Trail" },
-                { id: "leaderboard", icon: TrophyIcon, label: "Ranks" },
-              ].map((tab) => {
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex-1 flex flex-col items-center justify-center py-3 rounded-2xl transition-all duration-300 ${
-                      isActive
-                        ? "bg-stone-900 text-white shadow-lg"
-                        : "text-stone-400 hover:bg-stone-50 hover:text-stone-600"
-                    }`}
-                  >
-                    <tab.icon
-                      className={`w-5 h-5 mb-0.5 ${
-                        isActive ? "stroke-2" : "stroke-[1.5]"
-                      }`}
-                    />
-                    <span className="text-[10px] font-bold tracking-wide">
-                      {tab.label}
-                    </span>
-                  </button>
-                );
-              })}
+              <button
+                onClick={() => setActiveTab("game")}
+                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                  activeTab === "game"
+                    ? "bg-stone-900 text-white"
+                    : "text-stone-400"
+                }`}
+              >
+                <MapIcon className="w-5 h-5 mb-0.5" />{" "}
+                <span className="text-[10px] font-bold">Trail</span>
+              </button>
+              <button
+                onClick={() => setActiveTab("leaderboard")}
+                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                  activeTab === "leaderboard"
+                    ? "bg-stone-900 text-white"
+                    : "text-stone-400"
+                }`}
+              >
+                <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
+                <span className="text-[10px] font-bold">Ranks</span>
+              </button>
             </>
           ) : (
-            // Organizer Tabs
             <>
-              {[
-                { id: "manage", icon: SettingsIcon, label: "Manage" },
-                { id: "leaderboard", icon: TrophyIcon, label: "Ranks" },
-              ].map((tab) => {
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex-1 flex flex-col items-center justify-center py-3 rounded-2xl transition-all duration-300 ${
-                      isActive
-                        ? "bg-stone-900 text-white shadow-lg"
-                        : "text-stone-400 hover:bg-stone-50 hover:text-stone-600"
-                    }`}
-                  >
-                    <tab.icon
-                      className={`w-5 h-5 mb-0.5 ${
-                        isActive ? "stroke-2" : "stroke-[1.5]"
-                      }`}
-                    />
-                    <span className="text-[10px] font-bold tracking-wide">
-                      {tab.label}
-                    </span>
-                  </button>
-                );
-              })}
+              <button
+                onClick={() => setActiveTab("manage")}
+                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                  activeTab === "manage"
+                    ? "bg-stone-900 text-white"
+                    : "text-stone-400"
+                }`}
+              >
+                <SettingsIcon className="w-5 h-5 mb-0.5" />{" "}
+                <span className="text-[10px] font-bold">Manage</span>
+              </button>
+              <button
+                onClick={() => setActiveTab("leaderboard")}
+                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                  activeTab === "leaderboard"
+                    ? "bg-stone-900 text-white"
+                    : "text-stone-400"
+                }`}
+              >
+                <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
+                <span className="text-[10px] font-bold">Ranks</span>
+              </button>
             </>
           )}
         </div>
