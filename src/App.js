@@ -21,6 +21,7 @@ import {
   deleteDoc,
   getDocs,
   writeBatch,
+  runTransaction,
   enableIndexedDbPersistence,
 } from "firebase/firestore";
 
@@ -432,6 +433,25 @@ const WifiOffIcon = (props) => (
   </svg>
 );
 
+const ArchiveIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <rect width="20" height="5" x="2" y="3" rx="1" />
+    <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+    <path d="M10 12h4" />
+  </svg>
+);
+
 // --- Configuration & Constants ---
 
 const DEFAULT_CHECKPOINTS = [
@@ -524,7 +544,7 @@ export default function App() {
   const [user, setUser] = useState(null);
 
   // -- Global State --
-  const [view, setView] = useState("landing");
+  const [view, setView] = useState("landing"); // landing, create, join, race, master_login, master_dashboard
   const [raceCode, setRaceCode] = useState("");
 
   // -- Race Data State --
@@ -549,6 +569,10 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // -- Master Admin State --
+  const [masterPassword, setMasterPassword] = useState("");
+  const [allRaces, setAllRaces] = useState([]);
 
   // -- UI States --
   const [activeTab, setActiveTab] = useState("game");
@@ -766,6 +790,89 @@ export default function App() {
     loadRace(code);
   };
 
+  // --- Master Admin Logic ---
+  const handleMasterLogin = (e) => {
+    e.preventDefault();
+    if (masterPassword === "SuperJasper") {
+      loadAllRaces();
+    } else {
+      setErrorMsg("Incorrect Master Password");
+    }
+  };
+
+  const loadAllRaces = async () => {
+    setLoading(true);
+    try {
+      const racesRef = collection(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races"
+      );
+      const snapshot = await getDocs(racesRef);
+      const racesList = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setAllRaces(racesList);
+      setView("master_dashboard");
+    } catch (e) {
+      console.error(e);
+      setErrorMsg("Failed to load races");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteRace = async (raceId) => {
+    if (
+      !window.confirm(
+        `Permanently delete race ${raceId}? This cannot be undone.`
+      )
+    )
+      return;
+    setLoading(true);
+    try {
+      // 1. Delete teams subcollection docs (client-side batch)
+      const teamsRef = collection(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races",
+        raceId,
+        "teams"
+      );
+      const teamsSnap = await getDocs(teamsRef);
+      const batch = writeBatch(db);
+      teamsSnap.forEach((doc) => batch.delete(doc.ref));
+
+      // 2. Delete race doc
+      const raceRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races",
+        raceId
+      );
+      batch.delete(raceRef);
+
+      await batch.commit();
+
+      // Refresh list
+      setAllRaces((prev) => prev.filter((r) => r.id !== raceId));
+    } catch (e) {
+      alert("Delete failed: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleIdentityLogin = async (e) => {
     e.preventDefault();
     setErrorMsg("");
@@ -947,6 +1054,7 @@ export default function App() {
       "races",
       raceCode
     );
+
     if (!editingCpId) {
       const newCp = {
         id: `cp${Date.now()}`,
@@ -959,6 +1067,7 @@ export default function App() {
       startEditingCheckpoint(newCp);
       return;
     }
+
     const newCps = checkpoints.map((cp) => {
       if (cp.id === editingCpId) {
         return {
@@ -1137,6 +1246,36 @@ export default function App() {
     setView("landing");
   };
 
+  const formatTime = (isoString) => {
+    if (!isoString) return "";
+    const date = new Date(isoString);
+    return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  };
+
+  const getRankStyle = (index) => {
+    switch (index) {
+      case 0:
+        return "bg-gradient-to-br from-yellow-100 to-yellow-200 border-yellow-300 text-yellow-800 ring-2 ring-yellow-300 ring-offset-2 ring-offset-white";
+      case 1:
+        return "bg-gradient-to-br from-slate-100 to-slate-200 border-slate-300 text-slate-700 ring-2 ring-slate-300 ring-offset-2 ring-offset-white";
+      case 2:
+        return "bg-gradient-to-br from-orange-100 to-orange-200 border-orange-300 text-orange-800 ring-2 ring-orange-300 ring-offset-2 ring-offset-white";
+      default:
+        return "bg-white border-stone-100 text-stone-500";
+    }
+  };
+
+  const getMedalIcon = (index) => {
+    if (index === 0) return "🥇";
+    if (index === 1) return "🥈";
+    if (index === 2) return "🥉";
+    return <span className="text-sm font-bold opacity-50">{index + 1}</span>;
+  };
+
   // --- Views ---
 
   if (loading)
@@ -1180,6 +1319,107 @@ export default function App() {
               <PlusIcon className="w-5 h-5" /> Set Up New Race
             </button>
           </div>
+
+          {/* Master Admin Hidden Button */}
+          <button
+            onClick={() => setView("master_login")}
+            className="absolute -bottom-24 right-4 p-2 text-stone-500/20 hover:text-stone-500/50 transition z-20"
+          >
+            <LockIcon className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 1.5 MASTER LOGIN
+  if (view === "master_login") {
+    return (
+      <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-6">
+        <div className="max-w-sm w-full space-y-6">
+          <button
+            onClick={() => setView("landing")}
+            className="text-stone-400 flex items-center gap-2 text-sm font-bold"
+          >
+            <ArrowLeftIcon className="w-4 h-4" /> Back
+          </button>
+          <h2 className="text-2xl font-bold text-white text-center">
+            Master Control
+          </h2>
+          <form onSubmit={handleMasterLogin} className="space-y-4">
+            <input
+              type="password"
+              className="w-full bg-stone-800 border-stone-700 rounded-xl px-4 py-3 text-white text-center"
+              placeholder="Master Password"
+              value={masterPassword}
+              onChange={(e) => setMasterPassword(e.target.value)}
+              autoFocus
+            />
+            {errorMsg && (
+              <div className="text-red-400 text-sm text-center">{errorMsg}</div>
+            )}
+            <button
+              type="submit"
+              className="w-full bg-red-600 text-white font-bold py-3 rounded-xl"
+            >
+              Authenticate
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // 1.6 MASTER DASHBOARD
+  if (view === "master_dashboard") {
+    return (
+      <div className="min-h-screen bg-stone-900 p-6 flex flex-col">
+        <div className="flex justify-between items-center mb-8">
+          <button
+            onClick={() => setView("landing")}
+            className="text-stone-400 flex items-center gap-2 text-sm font-bold"
+          >
+            <ArrowLeftIcon className="w-4 h-4" /> Back
+          </button>
+          <h2 className="text-xl font-bold text-white">All Races</h2>
+        </div>
+
+        <div className="space-y-4 flex-1 overflow-y-auto">
+          {allRaces.length === 0 ? (
+            <div className="text-stone-500 text-center mt-10">
+              No races found.
+            </div>
+          ) : (
+            allRaces.map((race) => (
+              <div
+                key={race.id}
+                className="bg-stone-800 p-4 rounded-xl border border-stone-700 flex justify-between items-center"
+              >
+                <div>
+                  <div className="text-white font-bold text-lg">
+                    {race.raceName}
+                  </div>
+                  <div className="text-stone-400 text-sm font-mono">
+                    Code: {race.id}
+                  </div>
+                  <div className="text-stone-500 text-xs mt-1">
+                    Created:{" "}
+                    {race.createdAt
+                      ? new Date(
+                          race.createdAt.seconds * 1000
+                        ).toLocaleDateString()
+                      : "Unknown"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDeleteRace(race.id)}
+                  className="bg-red-900/30 text-red-400 p-3 rounded-lg hover:bg-red-900/50 transition"
+                >
+                  <TrashIcon className="w-5 h-5" />
+                </button>
+              </div>
+            ))
+          )}
         </div>
       </div>
     );
@@ -1226,6 +1466,7 @@ export default function App() {
                 required
               />
             </div>
+
             <div className="space-y-1">
               <label className="text-xs font-bold text-stone-500 uppercase">
                 Background Image
@@ -1245,12 +1486,13 @@ export default function App() {
                   <UploadIcon className="w-4 h-4" />
                   <span className="text-xs truncate">
                     {createForm.bgUrl
-                      ? "Image Selected"
+                      ? "Image Selected (Tap to change)"
                       : "Tap to upload background"}
                   </span>
                 </label>
               </div>
             </div>
+
             <div className="space-y-1">
               <label className="text-xs font-bold text-stone-500 uppercase">
                 Logo Image
@@ -1270,12 +1512,13 @@ export default function App() {
                   <UploadIcon className="w-4 h-4" />
                   <span className="text-xs truncate">
                     {createForm.logoUrl
-                      ? "Image Selected"
+                      ? "Image Selected (Tap to change)"
                       : "Tap to upload logo"}
                   </span>
                 </label>
               </div>
             </div>
+
             {errorMsg && <div className="text-red-400 text-sm">{errorMsg}</div>}
             <button
               type="submit"
@@ -1300,6 +1543,7 @@ export default function App() {
           >
             <ArrowLeftIcon className="w-4 h-4" /> Back
           </button>
+
           <h2 className="text-2xl font-bold text-white">Enter Race Code</h2>
           <input
             className="w-full bg-stone-800 border-stone-700 rounded-2xl px-6 py-6 text-white text-center text-4xl font-mono tracking-widest uppercase focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -1332,6 +1576,7 @@ export default function App() {
           />
           <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"></div>
         </div>
+
         <div className="z-10 w-full max-w-sm space-y-8 text-center relative">
           <div className="inline-flex p-0 rounded-3xl overflow-hidden relative shadow-2xl mb-4 w-24 h-24">
             <img
@@ -1419,16 +1664,6 @@ export default function App() {
   }
 
   // --- 5. RACE APP ---
-  const formatTime = (isoString) => {
-    if (!isoString) return "";
-    const date = new Date(isoString);
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  };
-
   return (
     <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col">
       {selectedTeamDetail && (
