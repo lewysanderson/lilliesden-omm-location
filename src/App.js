@@ -793,7 +793,7 @@ export default function App() {
   // --- Master Admin Logic ---
   const handleMasterLogin = (e) => {
     e.preventDefault();
-    if (masterPassword === "SuperJasper") {
+    if (masterPassword === "Jasper") {
       loadAllRaces();
     } else {
       setErrorMsg("Incorrect Master Password");
@@ -1302,7 +1302,7 @@ export default function App() {
             <CompassIcon className="w-12 h-12 text-white" />
           </div>
           <h1 className="text-4xl font-black text-white tracking-tight">
-            OMM Master
+            Lilliesden Maps
           </h1>
 
           <div className="space-y-4">
