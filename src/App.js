@@ -21,7 +21,7 @@ import {
   deleteDoc,
   getDocs,
   writeBatch,
-  runTransaction,
+  enableIndexedDbPersistence,
 } from "firebase/firestore";
 
 // --- Icon Components ---
@@ -370,6 +370,68 @@ const FlagIcon = (props) => (
   </svg>
 );
 
+const UploadIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="17 8 12 3 7 8" />
+    <line x1="12" x2="12" y1="3" y2="15" />
+  </svg>
+);
+
+const WifiIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+    <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+    <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+    <line x1="12" y1="20" x2="12.01" y2="20" />
+  </svg>
+);
+
+const WifiOffIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <line x1="2" y1="2" x2="22" y2="22" />
+    <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+    <line x1="12" y1="20" x2="12.01" y2="20" />
+    <path d="M1.42 9a16 16 0 0 1 5.46-.72" />
+    <path d="M15.54 8.78a16 16 0 0 1 7.04.22" />
+    <path d="M5 12.55a11 11 0 0 1 3.52-.76" />
+    <path d="M14.05 11.96a11 11 0 0 1 5.03.59" />
+  </svg>
+);
+
 // --- Configuration & Constants ---
 
 const DEFAULT_CHECKPOINTS = [
@@ -401,7 +463,8 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
 
-// --- Geolocation Helper ---
+// --- Helper Functions ---
+
 function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   const R = 6371e3;
   const φ1 = (lat1 * Math.PI) / 180;
@@ -417,7 +480,43 @@ function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Generate random 4-char code
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_WIDTH = 800;
+        const MAX_HEIGHT = 800;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.6));
+      };
+      img.onerror = (error) => reject(error);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
+
 const generateRaceCode = () =>
   Math.random().toString(36).substring(2, 6).toUpperCase();
 
@@ -425,10 +524,10 @@ export default function App() {
   const [user, setUser] = useState(null);
 
   // -- Global State --
-  const [view, setView] = useState("landing"); // landing, create, join, race
+  const [view, setView] = useState("landing");
   const [raceCode, setRaceCode] = useState("");
 
-  // -- Race Data State (For active race) --
+  // -- Race Data State --
   const [raceConfig, setRaceConfig] = useState(null);
   const [teamName, setTeamName] = useState("");
   const [availableTeams, setAvailableTeams] = useState([]);
@@ -449,8 +548,9 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  // -- Game UI State --
+  // -- UI States --
   const [activeTab, setActiveTab] = useState("game");
   const [scanResult, setScanResult] = useState(null);
   const [gpsLoadingId, setGpsLoadingId] = useState(null);
@@ -466,7 +566,7 @@ export default function App() {
   const [editCpLat, setEditCpLat] = useState("");
   const [editCpLng, setEditCpLng] = useState("");
 
-  // Inject Tailwind CSS
+  // Setup Online/Offline Listener & Styles
   useEffect(() => {
     const existingScript = document.getElementById("tailwind-script");
     if (!existingScript) {
@@ -475,12 +575,33 @@ export default function App() {
       script.src = "https://cdn.tailwindcss.com";
       document.head.appendChild(script);
     }
+
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
   }, []);
 
-  // 1. Initial Authentication
+  // 1. Initial Authentication with Persistence
   useEffect(() => {
     const initAuth = async () => {
       try {
+        // Enable Offline Persistence
+        try {
+          await enableIndexedDbPersistence(db);
+        } catch (err) {
+          console.log(
+            "Persistence likely already enabled or multi-tab error",
+            err
+          );
+        }
+
         await setPersistence(auth, browserLocalPersistence);
         await signInAnonymously(auth);
       } catch (err) {
@@ -493,7 +614,6 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Attempt to restore session
         const savedRace = localStorage.getItem(`omm_race_${appId}`);
         if (savedRace) {
           setRaceCode(savedRace);
@@ -520,7 +640,6 @@ export default function App() {
         code
       );
 
-      // Listen to Race Config changes
       const unsubConfig = onSnapshot(raceRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
@@ -531,7 +650,6 @@ export default function App() {
           setView("race");
           localStorage.setItem(`omm_race_${appId}`, code);
 
-          // Restore Team Identity if exists for this race
           const savedTeam = localStorage.getItem(`omm_team_${code}`);
           const savedAdmin = localStorage.getItem(`omm_admin_${code}`);
 
@@ -549,7 +667,6 @@ export default function App() {
         setLoading(false);
       });
 
-      // Listen to Teams/Leaderboard
       const teamsRef = collection(
         db,
         "artifacts",
@@ -563,7 +680,6 @@ export default function App() {
       const unsubTeams = onSnapshot(teamsRef, (snapshot) => {
         const loadedTeams = [];
         let myData = null;
-        // Check local storage inside the snapshot callback to ensure we match against current data
         const currentTeamName = localStorage.getItem(`omm_team_${code}`);
 
         snapshot.forEach((doc) => {
@@ -589,12 +705,22 @@ export default function App() {
     }
   };
 
-  // -- Actions: Create Race --
+  // ... [Other Handlers remain the same] ...
+  const handleFileChange = async (e, field) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const compressedDataUrl = await compressImage(file);
+      setCreateForm((prev) => ({ ...prev, [field]: compressedDataUrl }));
+    } catch (err) {
+      alert("Failed to process image.");
+    }
+  };
+
   const handleCreateRace = async (e) => {
     e.preventDefault();
     if (!createForm.name || !createForm.password) return;
     setLoading(true);
-
     const newCode = generateRaceCode();
     const raceRef = doc(
       db,
@@ -605,29 +731,24 @@ export default function App() {
       "races",
       newCode
     );
-
     try {
       await setDoc(raceRef, {
         raceName: createForm.name,
         adminPassword: createForm.password,
-        backgroundUrl: createForm.bgUrl || "imageAG.jpg",
+        backgroundUrl: createForm.bgUrl || "background_image.jpg",
         logoUrl: createForm.logoUrl || "image.jpg",
         teamsList: ["Team Anderson", "Team Porteous"],
         checkpointsList: DEFAULT_CHECKPOINTS,
         createdAt: new Date(),
       });
-
-      // Auto-join as admin
       localStorage.setItem(`omm_admin_${newCode}`, "true");
-      await loadRace(newCode); // This sets state and listeners
+      await loadRace(newCode);
     } catch (err) {
-      console.error("Create failed", err);
-      setErrorMsg("Failed to create race. Try again.");
+      setErrorMsg("Failed to create race.");
       setLoading(false);
     }
   };
 
-  // -- Actions: Join Race --
   const handleJoinRace = async (e) => {
     e.preventDefault();
     if (!joinCode) return;
@@ -641,16 +762,10 @@ export default function App() {
       "races",
       code
     );
-    const docSnap = await getDoc(raceRef);
-
-    if (docSnap.exists()) {
-      loadRace(code);
-    } else {
-      setErrorMsg("Invalid Race Code");
-    }
+    // For offline support, we try to load. If offline, it might use cache if visited before.
+    loadRace(code);
   };
 
-  // -- Actions: Login to Team/Admin (Inside Race) --
   const handleIdentityLogin = async (e) => {
     e.preventDefault();
     setErrorMsg("");
@@ -664,9 +779,9 @@ export default function App() {
         setErrorMsg("Incorrect Password");
       }
     } else {
-      // Join as Team
       setLoading(true);
       try {
+        // Creating team doc if it doesn't exist. Offline this queues a write.
         const teamRef = doc(
           db,
           "artifacts",
@@ -678,16 +793,16 @@ export default function App() {
           "teams",
           selectedIdentity
         );
-        const docSnap = await getDoc(teamRef);
-        if (!docSnap.exists()) {
-          await setDoc(teamRef, {
+        // We can use setDoc with merge to be safe offline (it creates or updates)
+        setDoc(
+          teamRef,
+          {
             name: selectedIdentity,
-            score: 0,
-            scanned: [],
-            scanHistory: [],
-            createdAt: new Date(),
-          });
-        }
+            // Only set these if creating fresh, but merge handles existing data preservation
+          },
+          { merge: true }
+        );
+
         setTeamName(selectedIdentity);
         localStorage.setItem(`omm_team_${raceCode}`, selectedIdentity);
         setActiveTab("game");
@@ -699,7 +814,7 @@ export default function App() {
     }
   };
 
-  // -- Actions: GPS Checkin --
+  // -- GPS CHECKIN - OFFLINE ENABLED --
   const handleGpsCheckIn = async (cpId) => {
     setGpsLoadingId(cpId);
     const checkpoint = checkpoints.find((c) => c.id === cpId);
@@ -710,6 +825,7 @@ export default function App() {
       return;
     }
 
+    // Local check prevents duplicate scanning even offline
     if (myTeamData?.scanned?.includes(cpId)) {
       setScanResult({ status: "error", message: "Already checked in!" });
       setGpsLoadingId(null);
@@ -745,32 +861,30 @@ export default function App() {
               teamName
             );
             const points = parseInt(checkpoint.points, 10) || 0;
-            await runTransaction(db, async (t) => {
-              const doc = await t.get(teamRef);
-              if (!doc.exists()) throw "Team missing";
-              if (doc.data().scanned?.includes(cpId)) throw "Already scanned";
 
-              t.update(teamRef, {
-                score: increment(points),
-                scanned: arrayUnion(cpId),
-                scanHistory: arrayUnion({
-                  id: cpId,
-                  name: checkpoint.name,
-                  points: points,
-                  timestamp: new Date().toISOString(),
-                  method: "GPS",
-                }),
-                lastUpdated: new Date(),
-              });
+            // OFFLINE CHANGE: Use updateDoc instead of runTransaction.
+            // updateDoc works offline (queues writes). Transaction requires network.
+            await updateDoc(teamRef, {
+              score: increment(points),
+              scanned: arrayUnion(cpId),
+              scanHistory: arrayUnion({
+                id: cpId,
+                name: checkpoint.name,
+                points: points,
+                timestamp: new Date().toISOString(),
+                method: "GPS",
+              }),
+              lastUpdated: new Date(),
             });
+
             setScanResult({
               status: "success",
               message: `Checked in at ${checkpoint.name}!`,
               points: points,
             });
           } catch (err) {
-            if (err !== "Already scanned")
-              setScanResult({ status: "error", message: "Save failed." });
+            console.error("Save Error", err);
+            setScanResult({ status: "error", message: "Save failed." });
           }
         } else {
           const rounded = Math.max(100, Math.round(dist / 100) * 100);
@@ -833,8 +947,6 @@ export default function App() {
       "races",
       raceCode
     );
-
-    // Add New
     if (!editingCpId) {
       const newCp = {
         id: `cp${Date.now()}`,
@@ -847,8 +959,6 @@ export default function App() {
       startEditingCheckpoint(newCp);
       return;
     }
-
-    // Save Edit
     const newCps = checkpoints.map((cp) => {
       if (cp.id === editingCpId) {
         return {
@@ -887,16 +997,137 @@ export default function App() {
     await updateDoc(raceRef, { checkpointsList: newCps });
   };
 
-  // -- Navigation --
-  const handleLogout = () => {
-    localStorage.removeItem(`omm_admin_${raceCode}`);
-    localStorage.removeItem(`omm_team_${raceCode}`);
-    setIsAdmin(false);
-    setTeamName("");
-    setMyTeamData(null);
-    setSelectedIdentity("");
-    setPasswordInput("");
-    setActiveTab("game");
+  const handleAddCheckpoint = async () => {
+    const newId = `cp${Date.now()}`;
+    const newCp = {
+      id: newId,
+      name: "New Checkpoint",
+      points: 10,
+      lat: 0,
+      lng: 0,
+    };
+    const newList = [...checkpoints, newCp];
+    const cpConfigRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "races",
+      raceCode
+    );
+    try {
+      await updateDoc(cpConfigRef, { checkpointsList: newList });
+      startEditingCheckpoint(newCp);
+    } catch (e) {
+      alert("Failed to add checkpoint");
+    }
+  };
+
+  const saveCheckpoint = async (cpId) => {
+    const cpConfigRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "races",
+      raceCode
+    );
+    const newCheckpoints = checkpoints.map((cp) => {
+      if (cp.id === cpId) {
+        return {
+          ...cp,
+          name: editCpName,
+          points: parseInt(editCpPoints, 10) || 0,
+          lat: editCpLat,
+          lng: editCpLng,
+        };
+      }
+      return cp;
+    });
+
+    try {
+      await updateDoc(cpConfigRef, { checkpointsList: newCheckpoints });
+      setEditingCpId(null);
+    } catch (e) {
+      alert("Failed to save checkpoint");
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingCpId(null);
+  };
+
+  const handleFactoryReset = async (e) => {
+    e.preventDefault();
+    if (resetPasswordInput !== "reset") {
+      alert("Incorrect Reset Password");
+      return;
+    }
+    setLoading(true);
+    try {
+      const batch = writeBatch(db);
+      const teamsRef = collection(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races",
+        raceCode,
+        "teams"
+      );
+      const snapshot = await getDocs(teamsRef);
+      snapshot.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+
+      const raceRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races",
+        raceCode
+      );
+      await updateDoc(raceRef, {
+        teamsList: ["Team Anderson", "Team Porteous"],
+        checkpointsList: DEFAULT_CHECKPOINTS,
+      });
+
+      setShowResetInput(false);
+      setResetPasswordInput("");
+      alert("Race Reset Complete.");
+    } catch (err) {
+      alert("Reset failed: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setLoading(true);
+    try {
+      localStorage.removeItem(`omm_admin_${raceCode}`);
+      localStorage.removeItem(`omm_team_${raceCode}`);
+      await signOut(auth);
+      await signInAnonymously(auth);
+
+      setIsAdmin(false);
+      setTeamName("");
+      setMyTeamData(null);
+      setSelectedIdentity("");
+      setPasswordInput("");
+      setActiveTab("game");
+      setSelectedTeamDetail(null);
+    } catch (error) {
+      console.error("Logout failed", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleExitRace = () => {
@@ -906,40 +1137,7 @@ export default function App() {
     setView("landing");
   };
 
-  // --- Helper: Format Time ---
-  const formatTime = (isoString) => {
-    if (!isoString) return "";
-    const date = new Date(isoString);
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  };
-
-  // --- Render Helpers ---
-
-  const getRankStyle = (index) => {
-    switch (index) {
-      case 0:
-        return "bg-gradient-to-br from-yellow-100 to-yellow-200 border-yellow-300 text-yellow-800 ring-2 ring-yellow-300 ring-offset-2 ring-offset-white";
-      case 1:
-        return "bg-gradient-to-br from-slate-100 to-slate-200 border-slate-300 text-slate-700 ring-2 ring-slate-300 ring-offset-2 ring-offset-white";
-      case 2:
-        return "bg-gradient-to-br from-orange-100 to-orange-200 border-orange-300 text-orange-800 ring-2 ring-orange-300 ring-offset-2 ring-offset-white";
-      default:
-        return "bg-white border-stone-100 text-stone-500";
-    }
-  };
-
-  const getMedalIcon = (index) => {
-    if (index === 0) return "🥇";
-    if (index === 1) return "🥈";
-    if (index === 2) return "🥉";
-    return <span className="text-sm font-bold opacity-50">{index + 1}</span>;
-  };
-
-  // --- VIEWS ---
+  // --- Views ---
 
   if (loading)
     return (
@@ -948,11 +1146,19 @@ export default function App() {
       </div>
     );
 
-  // 1. LANDING (Global Home)
+  // 1. LANDING
   if (view === "landing") {
     return (
       <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-6 relative">
-        <div className="z-10 w-full max-w-sm space-y-8 text-center">
+        <div className="absolute inset-0 z-0">
+          <img
+            src="background_image.jpg"
+            alt="bg"
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"></div>
+        </div>
+        <div className="z-10 w-full max-w-sm space-y-8 text-center relative">
           <div className="inline-flex p-4 rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-600 shadow-2xl mb-4">
             <CompassIcon className="w-12 h-12 text-white" />
           </div>
@@ -1022,29 +1228,53 @@ export default function App() {
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-stone-500 uppercase">
-                Background Image URL (Optional)
+                Background Image
               </label>
-              <input
-                className="w-full bg-stone-800 border-stone-700 rounded-xl px-4 py-3 text-white text-xs"
-                value={createForm.bgUrl}
-                onChange={(e) =>
-                  setCreateForm({ ...createForm, bgUrl: e.target.value })
-                }
-                placeholder="https://..."
-              />
+              <div className="relative">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleFileChange(e, "bgUrl")}
+                  className="hidden"
+                  id="bg-upload"
+                />
+                <label
+                  htmlFor="bg-upload"
+                  className="w-full flex items-center gap-3 bg-stone-800 border border-stone-700 border-dashed rounded-xl px-4 py-3 text-stone-400 cursor-pointer hover:bg-stone-800/80 transition"
+                >
+                  <UploadIcon className="w-4 h-4" />
+                  <span className="text-xs truncate">
+                    {createForm.bgUrl
+                      ? "Image Selected"
+                      : "Tap to upload background"}
+                  </span>
+                </label>
+              </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-stone-500 uppercase">
-                Logo Image URL (Optional)
+                Logo Image
               </label>
-              <input
-                className="w-full bg-stone-800 border-stone-700 rounded-xl px-4 py-3 text-white text-xs"
-                value={createForm.logoUrl}
-                onChange={(e) =>
-                  setCreateForm({ ...createForm, logoUrl: e.target.value })
-                }
-                placeholder="https://..."
-              />
+              <div className="relative">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleFileChange(e, "logoUrl")}
+                  className="hidden"
+                  id="logo-upload"
+                />
+                <label
+                  htmlFor="logo-upload"
+                  className="w-full flex items-center gap-3 bg-stone-800 border border-stone-700 border-dashed rounded-xl px-4 py-3 text-stone-400 cursor-pointer hover:bg-stone-800/80 transition"
+                >
+                  <UploadIcon className="w-4 h-4" />
+                  <span className="text-xs truncate">
+                    {createForm.logoUrl
+                      ? "Image Selected"
+                      : "Tap to upload logo"}
+                  </span>
+                </label>
+              </div>
             </div>
             {errorMsg && <div className="text-red-400 text-sm">{errorMsg}</div>}
             <button
@@ -1070,7 +1300,6 @@ export default function App() {
           >
             <ArrowLeftIcon className="w-4 h-4" /> Back
           </button>
-
           <h2 className="text-2xl font-bold text-white">Enter Race Code</h2>
           <input
             className="w-full bg-stone-800 border-stone-700 rounded-2xl px-6 py-6 text-white text-center text-4xl font-mono tracking-widest uppercase focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -1091,22 +1320,19 @@ export default function App() {
     );
   }
 
-  // 4. RACE - LOGIN SCREEN (Team Selection)
+  // 4. RACE LOGIN
   if (!teamName && !isAdmin) {
     return (
       <div className="min-h-screen bg-stone-900 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        {/* Dynamic Background */}
         <div className="absolute inset-0 z-0">
           <img
-            src={raceConfig?.backgroundUrl || "imageAG.jpg"}
+            src={raceConfig?.backgroundUrl || "background_image.jpg"}
             alt="bg"
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"></div>
         </div>
-
         <div className="z-10 w-full max-w-sm space-y-8 text-center relative">
-          {/* Dynamic Logo */}
           <div className="inline-flex p-0 rounded-3xl overflow-hidden relative shadow-2xl mb-4 w-24 h-24">
             <img
               src={raceConfig?.logoUrl || "image.jpg"}
@@ -1114,7 +1340,6 @@ export default function App() {
               className="absolute inset-0 w-full h-full object-cover"
             />
           </div>
-
           <div className="space-y-1">
             <h1 className="text-4xl font-black text-white tracking-tight drop-shadow-lg">
               {raceConfig?.raceName}
@@ -1123,7 +1348,6 @@ export default function App() {
               CODE: {raceCode}
             </div>
           </div>
-
           <form
             onSubmit={handleIdentityLogin}
             className="space-y-4 pt-4 bg-white/10 p-6 rounded-3xl border border-white/20 backdrop-blur-md shadow-2xl"
@@ -1156,7 +1380,6 @@ export default function App() {
                 </select>
               </div>
             </div>
-
             {selectedIdentity === "Admin" && (
               <input
                 type="password"
@@ -1166,19 +1389,17 @@ export default function App() {
                 placeholder="Password"
               />
             )}
-
             {errorMsg && (
               <div className="text-red-300 text-sm bg-red-900/40 py-2 rounded-lg border border-red-500/30">
                 {errorMsg}
               </div>
             )}
-
             <button
               type="submit"
               disabled={!selectedIdentity}
               className="w-full bg-emerald-600 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2"
             >
-              {selectedIdentity === "Admin" ? "Login" : "Start"}
+              {selectedIdentity === "Admin" ? "Login" : "Start"}{" "}
               {selectedIdentity === "Admin" ? (
                 <LockIcon className="w-4 h-4" />
               ) : (
@@ -1186,7 +1407,6 @@ export default function App() {
               )}
             </button>
           </form>
-
           <button
             onClick={handleExitRace}
             className="text-white/40 text-xs font-bold hover:text-white mt-8"
@@ -1198,99 +1418,98 @@ export default function App() {
     );
   }
 
-  // --- VIEW: TEAM DETAIL MODAL ---
-  if (selectedTeamDetail) {
-    const sortedHistory = selectedTeamDetail.scanHistory
-      ? [...selectedTeamDetail.scanHistory].sort(
-          (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-        )
-      : [];
+  // --- 5. RACE APP ---
+  const formatTime = (isoString) => {
+    if (!isoString) return "";
+    const date = new Date(isoString);
+    return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  };
 
-    return (
-      <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col animate-in fade-in zoom-in-95 duration-200">
-        {/* Header */}
-        <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl">
-          <button
-            onClick={() => setSelectedTeamDetail(null)}
-            className="absolute top-6 left-6 p-2 bg-white/10 rounded-full hover:bg-white/20 transition"
-          >
-            <ArrowLeftIcon className="w-5 h-5 text-white" />
-          </button>
-          <div className="mt-8 text-center">
-            <h2 className="text-2xl font-black">{selectedTeamDetail.name}</h2>
-            <div className="text-stone-400 text-sm font-medium mt-1">
-              Trail Log
-            </div>
-            <div className="mt-4 flex justify-center gap-4">
-              <div className="bg-emerald-500/20 px-4 py-2 rounded-xl border border-emerald-500/30">
-                <div className="text-xs text-emerald-400 uppercase font-bold tracking-wider">
-                  Points
-                </div>
-                <div className="text-2xl font-black text-emerald-100">
-                  {selectedTeamDetail.score}
-                </div>
+  return (
+    <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col">
+      {selectedTeamDetail && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl relative z-10">
+            <button
+              onClick={() => setSelectedTeamDetail(null)}
+              className="absolute top-6 left-6 p-2 bg-white/10 rounded-full hover:bg-white/20 transition"
+            >
+              <ArrowLeftIcon className="w-5 h-5 text-white" />
+            </button>
+            <div className="mt-8 text-center">
+              <h2 className="text-2xl font-black">{selectedTeamDetail.name}</h2>
+              <div className="text-stone-400 text-sm font-medium mt-1">
+                Trail Log
               </div>
-              <div className="bg-blue-500/20 px-4 py-2 rounded-xl border border-blue-500/30">
-                <div className="text-xs text-blue-400 uppercase font-bold tracking-wider">
-                  Found
+              <div className="mt-4 flex justify-center gap-4">
+                <div className="bg-emerald-500/20 px-4 py-2 rounded-xl border border-emerald-500/30">
+                  <div className="text-xs text-emerald-400 uppercase font-bold tracking-wider">
+                    Points
+                  </div>
+                  <div className="text-2xl font-black text-emerald-100">
+                    {selectedTeamDetail.score}
+                  </div>
                 </div>
-                <div className="text-2xl font-black text-blue-100">
-                  {sortedHistory.length}
+                <div className="bg-blue-500/20 px-4 py-2 rounded-xl border border-blue-500/30">
+                  <div className="text-xs text-blue-400 uppercase font-bold tracking-wider">
+                    Found
+                  </div>
+                  <div className="text-2xl font-black text-blue-100">
+                    {selectedTeamDetail.scanned?.length || 0}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Timeline */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {sortedHistory.length === 0 ? (
-            <div className="text-center text-stone-400 mt-10">
-              No checkpoints found yet.
-            </div>
-          ) : (
-            sortedHistory.map((scan, index) => (
-              <div key={index} className="flex gap-4 relative">
-                {/* Line connecting dots */}
-                {index !== sortedHistory.length - 1 && (
-                  <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-stone-200"></div>
-                )}
-
-                <div className="flex-shrink-0 mt-1">
-                  <div className="w-6 h-6 rounded-full bg-emerald-500 border-4 border-emerald-100 shadow-sm"></div>
-                </div>
-                <div className="flex-1 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="font-bold text-stone-800">
-                        {scan.name || "Unknown"}
-                      </div>
-                      <div className="text-xs text-stone-400 font-mono mt-1">
-                        {formatTime(scan.timestamp)}
-                      </div>
-                      {scan.method === "GPS" && (
-                        <div className="text-[10px] text-blue-400 font-bold uppercase mt-1">
-                          GPS Check-in
-                        </div>
-                      )}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {!selectedTeamDetail.scanHistory ||
+            selectedTeamDetail.scanHistory.length === 0 ? (
+              <div className="text-center text-stone-400 mt-10">
+                No checkpoints found yet.
+              </div>
+            ) : (
+              [...selectedTeamDetail.scanHistory]
+                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                .map((scan, index, arr) => (
+                  <div key={index} className="flex gap-4 relative">
+                    {index !== arr.length - 1 && (
+                      <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-stone-200"></div>
+                    )}
+                    <div className="flex-shrink-0 mt-1">
+                      <div className="w-6 h-6 rounded-full bg-emerald-500 border-4 border-emerald-100 shadow-sm"></div>
                     </div>
-                    <div className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-1 rounded-lg">
-                      +{scan.points}
+                    <div className="flex-1 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-bold text-stone-800">
+                            {scan.name || "Unknown"}
+                          </div>
+                          <div className="text-xs text-stone-400 font-mono mt-1">
+                            {formatTime(scan.timestamp)}
+                          </div>
+                          {scan.method === "GPS" && (
+                            <div className="text-[10px] text-blue-400 font-bold uppercase mt-1">
+                              GPS Check-in
+                            </div>
+                          )}
+                        </div>
+                        <div className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-1 rounded-lg">
+                          +{scan.points}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
-            ))
-          )}
+                ))
+            )}
+          </div>
         </div>
-      </div>
-    );
-  }
+      )}
 
-  // --- 5. RACE - MAIN APP ---
-  return (
-    <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col">
-      {/* Overlay: Scan Result */}
+      {/* Scan Result */}
       {scanResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/80 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white rounded-3xl w-full max-w-xs p-6 text-center shadow-2xl">
@@ -1336,9 +1555,19 @@ export default function App() {
               {isAdmin ? "Race Manager" : teamName}
             </h2>
           </div>
-          <div className="flex gap-2">
-            <div className="px-3 py-1.5 bg-stone-100 rounded-lg text-xs font-mono font-bold text-stone-500">
-              {raceCode}
+          <div className="flex gap-2 items-center">
+            <div
+              className={`px-2 py-1 rounded text-[10px] font-bold ${
+                isOnline
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-red-100 text-red-700"
+              }`}
+            >
+              {isOnline ? (
+                <WifiIcon className="w-3 h-3" />
+              ) : (
+                <WifiOffIcon className="w-3 h-3" />
+              )}
             </div>
             <button
               onClick={handleLogout}
@@ -1367,9 +1596,8 @@ export default function App() {
         )}
       </div>
 
-      {/* Main Content */}
+      {/* Main */}
       <main className="flex-1 overflow-y-auto px-4 pb-32 pt-6 space-y-6">
-        {/* Game Tab */}
         {activeTab === "game" && !isAdmin && (
           <div className="space-y-4">
             {checkpoints.map((cp, idx) => {
@@ -1418,10 +1646,37 @@ export default function App() {
           </div>
         )}
 
-        {/* Admin Manage Tab */}
+        {/* Leaderboard */}
+        {activeTab === "leaderboard" && (
+          <div className="space-y-3">
+            {teams.map((t, idx) => (
+              <div
+                key={t.id}
+                onClick={() => setSelectedTeamDetail(t)}
+                className={`flex items-center p-4 rounded-2xl bg-white border border-stone-100 shadow-sm cursor-pointer active:scale-95 transition-all ${
+                  idx < 3 ? "border-l-4 border-l-yellow-400" : ""
+                }`}
+              >
+                <div className="w-8 text-center font-bold text-stone-400">
+                  {idx + 1}
+                </div>
+                <div className="flex-1">
+                  <div className="font-bold text-stone-800">{t.name}</div>
+                  <div className="text-xs text-stone-400">
+                    {t.scanned?.length || 0} found
+                  </div>
+                </div>
+                <div className="font-black text-lg text-stone-900">
+                  {t.score}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Admin Tabs */}
         {activeTab === "manage" && isAdmin && (
           <div className="space-y-8">
-            {/* Teams */}
             <div className="space-y-4">
               <h3 className="font-bold text-stone-800 px-2">Teams</h3>
               <form onSubmit={handleAddTeam} className="flex gap-2">
@@ -1452,16 +1707,14 @@ export default function App() {
                 ))}
               </div>
             </div>
-
-            {/* Checkpoints */}
             <div className="space-y-4">
               <div className="flex justify-between items-center px-2">
                 <h3 className="font-bold text-stone-800">Checkpoints</h3>
                 <button
-                  onClick={handleUpdateCheckpoint}
-                  className="text-xs bg-emerald-100 text-emerald-700 font-bold px-3 py-1.5 rounded-lg"
+                  onClick={handleAddCheckpoint}
+                  className="text-xs bg-emerald-100 text-emerald-700 font-bold px-3 py-1.5 rounded-lg hover:bg-emerald-200 transition flex items-center gap-1"
                 >
-                  Add New
+                  <PlusIcon className="w-3 h-3" /> Add
                 </button>
               </div>
               {checkpoints.map((cp) => (
@@ -1506,7 +1759,7 @@ export default function App() {
                           Cancel
                         </button>
                         <button
-                          onClick={handleUpdateCheckpoint}
+                          onClick={() => saveCheckpoint(cp.id)}
                           className="text-xs font-bold bg-emerald-600 text-white px-3 py-1.5 rounded-lg"
                         >
                           Save
@@ -1547,38 +1800,52 @@ export default function App() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
 
-        {/* Leaderboard Tab */}
-        {activeTab === "leaderboard" && (
-          <div className="space-y-3">
-            {teams.map((t, idx) => (
-              <div
-                key={t.id}
-                className={`flex items-center p-4 rounded-2xl bg-white border border-stone-100 shadow-sm ${
-                  idx < 3 ? "border-l-4 border-l-yellow-400" : ""
-                }`}
-              >
-                <div className="w-8 text-center font-bold text-stone-400">
-                  {idx + 1}
-                </div>
-                <div className="flex-1">
-                  <div className="font-bold text-stone-800">{t.name}</div>
-                  <div className="text-xs text-stone-400">
-                    {t.scanned?.length || 0} found
+            <div className="mt-8 border-t-2 border-stone-100 pt-6">
+              {!showResetInput ? (
+                <button
+                  onClick={() => setShowResetInput(true)}
+                  className="w-full py-4 text-red-500 font-bold bg-red-50 rounded-2xl border border-red-100 hover:bg-red-100 transition flex items-center justify-center gap-2"
+                >
+                  <RefreshIcon className="w-5 h-5" /> Reset Application
+                </button>
+              ) : (
+                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 animate-in fade-in slide-in-from-bottom-2">
+                  <div className="text-red-800 font-bold text-sm mb-2 text-center">
+                    WARNING: This wipes all data!
                   </div>
+                  <form onSubmit={handleFactoryReset} className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Type 'reset' to confirm"
+                      value={resetPasswordInput}
+                      onChange={(e) => setResetPasswordInput(e.target.value)}
+                      className="flex-1 px-4 py-3 rounded-xl border border-red-200 text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                    />
+                    <button
+                      type="submit"
+                      className="bg-red-600 text-white font-bold px-4 py-3 rounded-xl hover:bg-red-700"
+                    >
+                      Wipe
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowResetInput(false);
+                        setResetPasswordInput("");
+                      }}
+                      className="text-stone-500 px-3 hover:text-stone-700"
+                    >
+                      Cancel
+                    </button>
+                  </form>
                 </div>
-                <div className="font-black text-lg text-stone-900">
-                  {t.score}
-                </div>
-              </div>
-            ))}
+              )}
+            </div>
           </div>
         )}
       </main>
 
-      {/* Navigation */}
       <div className="fixed bottom-6 left-6 right-6 z-40">
         <div className="bg-white/90 backdrop-blur-xl border border-white/20 p-2 rounded-3xl shadow-2xl flex justify-between max-w-sm mx-auto">
           {!isAdmin ? (
@@ -1630,6 +1897,7 @@ export default function App() {
                 <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
                 <span className="text-[10px] font-bold">Ranks</span>
               </button>
+              {/* QR Codes Tab - Optional now that we are GPS based */}
             </>
           )}
         </div>
