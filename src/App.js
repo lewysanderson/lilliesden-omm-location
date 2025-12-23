@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { initializeApp, getApp } from "firebase/app";
-import { Html5QrcodeScanner } from "html5-qrcode";
+import { Html5Qrcode } from "html5-qrcode"; // CHANGED: Using Core Library, not Scanner Widget
 import {
   getAuth,
   signInAnonymously,
@@ -542,29 +542,51 @@ const compressImage = (file) => {
 const generateRaceCode = () =>
   Math.random().toString(36).substring(2, 6).toUpperCase();
 
-// --- QR Scanner Component ---
+// --- QR Scanner Component (Improved) ---
 const QrScanner = ({ onScan, onClose }) => {
+  const [error, setError] = useState(null);
+
   useEffect(() => {
-    const scanner = new Html5QrcodeScanner(
-      "reader",
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      false
-    );
+    // 1. Initialize logic
+    const html5QrCode = new Html5Qrcode("reader");
 
-    scanner.render(
-      (decodedText) => {
-        onScan(decodedText);
-        scanner.clear();
-      },
-      (error) => {
-        // console.warn(error);
+    // 2. Start Scanner
+    const startScanner = async () => {
+      try {
+        await html5QrCode.start(
+          { facingMode: "environment" }, // Prefer back camera
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => {
+            // Success
+            html5QrCode
+              .stop()
+              .then(() => {
+                onScan(decodedText);
+              })
+              .catch((err) => console.error("Stop failed", err));
+          },
+          (errorMessage) => {
+            // Scan error (ignore usually)
+          }
+        );
+      } catch (err) {
+        console.error("Camera start error", err);
+        setError("Camera failed. Ensure you are on HTTPS and gave permission.");
       }
-    );
+    };
 
+    // Small timeout to ensure DOM is ready
+    const timer = setTimeout(() => {
+      startScanner();
+    }, 100);
+
+    // 3. Cleanup on unmount
     return () => {
-      scanner
-        .clear()
-        .catch((error) => console.error("Failed to clear scanner", error));
+      clearTimeout(timer);
+      if (html5QrCode.isScanning) {
+        html5QrCode.stop().catch((err) => console.error("Failed to stop", err));
+      }
+      // Note: we don't call clear() here as it removes the element which React manages
     };
   }, [onScan]);
 
@@ -576,8 +598,16 @@ const QrScanner = ({ onScan, onClose }) => {
       >
         <CloseIcon className="w-8 h-8" />
       </button>
-      <div id="reader" className="w-full max-w-sm bg-black"></div>
-      <p className="text-white mt-4 font-bold animate-pulse">Scanning...</p>
+
+      {/* The scanning container */}
+      <div
+        id="reader"
+        className="w-full max-w-sm bg-black overflow-hidden rounded-xl"
+      ></div>
+
+      <p className="text-white mt-4 font-bold animate-pulse">
+        {error ? <span className="text-red-400">{error}</span> : "Scanning..."}
+      </p>
     </div>
   );
 };
@@ -626,7 +656,7 @@ export default function App() {
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [scanningCpId, setScanningCpId] = useState(null);
   const [adminQrModalId, setAdminQrModalId] = useState(null);
-  const [viewingClueCp, setViewingClueCp] = useState(null); // For re-viewing a clue
+  const [viewingClueCp, setViewingClueCp] = useState(null);
 
   // -- Admin UI State --
   const [newTeamName, setNewTeamName] = useState("");
@@ -637,7 +667,7 @@ export default function App() {
   const [editCpPoints, setEditCpPoints] = useState("");
   const [editCpLat, setEditCpLat] = useState("");
   const [editCpLng, setEditCpLng] = useState("");
-  const [editCpClue, setEditCpClue] = useState(""); // NEW
+  const [editCpClue, setEditCpClue] = useState("");
 
   // Setup Online/Offline Listener & Styles
   useEffect(() => {
@@ -1987,8 +2017,19 @@ export default function App() {
                       <div className="font-bold text-stone-800 text-sm">
                         {cp.name}
                       </div>
-                      <div className="text-xs text-stone-400">
-                        {cp.points} pts
+                      <div className="text-xs text-stone-400 flex gap-2 mt-1">
+                        <span>{cp.points} pts</span>
+                        {cp.clue && (
+                          <span className="text-blue-500 flex items-center gap-0.5">
+                            <MessageIcon className="w-3 h-3" /> Msg
+                          </span>
+                        )}
+                        {(!cp.lat || !cp.lng) &&
+                          raceConfig?.checkInMethod === "GPS" && (
+                            <span className="text-red-400 flex items-center gap-1">
+                              <AlertCircleIcon className="w-3 h-3" /> No GPS
+                            </span>
+                          )}
                       </div>
                     </div>
                     {!isScanned && raceConfig?.checkInMethod === "GPS" && (
