@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { initializeApp, getApp } from "firebase/app";
-import { Html5QrcodeScanner } from "html5-qrcode"; // REQUIRES: npm install html5-qrcode
+import { Html5QrcodeScanner } from "html5-qrcode";
 import {
   getAuth,
   signInAnonymously,
@@ -18,7 +18,6 @@ import {
   updateDoc,
   arrayUnion,
   increment,
-  deleteDoc,
   getDocs,
   writeBatch,
   enableIndexedDbPersistence,
@@ -413,11 +412,53 @@ const CloseIcon = (props) => (
   </svg>
 );
 
+const EyeIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+const MessageIcon = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
 // --- Configuration & Constants ---
 
 const DEFAULT_CHECKPOINTS = [
-  { id: "cp1", name: "Start Line", points: 10, lat: 0, lng: 0 },
-  { id: "cp2", name: "The Old Oak", points: 20, lat: 0, lng: 0 },
+  {
+    id: "cp1",
+    name: "Start Line",
+    points: 10,
+    lat: 0,
+    lng: 0,
+    clue: "Welcome to the race! Your journey begins.",
+  },
+  { id: "cp2", name: "The Old Oak", points: 20, lat: 0, lng: 0, clue: "" },
 ];
 
 const GPS_RADIUS_METERS = 30; // Check-in radius
@@ -581,10 +622,11 @@ export default function App() {
   const [gpsLoadingId, setGpsLoadingId] = useState(null);
   const [selectedTeamDetail, setSelectedTeamDetail] = useState(null);
 
-  // -- QR UI States --
+  // -- QR/Clue UI States --
   const [showQrScanner, setShowQrScanner] = useState(false);
-  const [scanningCpId, setScanningCpId] = useState(null); // Used if we want to force scan specific point, but usually we just scan any
-  const [adminQrModalId, setAdminQrModalId] = useState(null); // Which QR code Admin is viewing
+  const [scanningCpId, setScanningCpId] = useState(null);
+  const [adminQrModalId, setAdminQrModalId] = useState(null);
+  const [viewingClueCp, setViewingClueCp] = useState(null); // For re-viewing a clue
 
   // -- Admin UI State --
   const [newTeamName, setNewTeamName] = useState("");
@@ -595,6 +637,7 @@ export default function App() {
   const [editCpPoints, setEditCpPoints] = useState("");
   const [editCpLat, setEditCpLat] = useState("");
   const [editCpLng, setEditCpLng] = useState("");
+  const [editCpClue, setEditCpClue] = useState(""); // NEW
 
   // Setup Online/Offline Listener & Styles
   useEffect(() => {
@@ -764,7 +807,7 @@ export default function App() {
         adminPassword: createForm.password,
         backgroundUrl: createForm.bgUrl || "background_image.jpg",
         logoUrl: createForm.logoUrl || "image.jpg",
-        checkInMethod: "GPS", // Default to GPS
+        checkInMethod: "GPS",
         teamsList: ["Team A", "Team B"],
         checkpointsList: DEFAULT_CHECKPOINTS,
         createdAt: new Date(),
@@ -950,10 +993,12 @@ export default function App() {
         lastUpdated: new Date(),
       });
 
+      // SUCCESS!
       setScanResult({
         status: "success",
         message: `Checked in at ${checkpoint.name}!`,
         points: points,
+        clue: checkpoint.clue || "", // Pass the clue to the modal
       });
     } catch (err) {
       console.error("Save Error", err);
@@ -1018,10 +1063,6 @@ export default function App() {
     const matchingCp = checkpoints.find((c) => c.id === decodedText);
 
     if (matchingCp) {
-      if (scanningCpId && scanningCpId !== matchingCp.id) {
-        // If user clicked "Scan" on a specific CP list item, warn if they scanned a different one
-        // Optional logic: we can just accept it anyway. Let's accept it but maybe show the name.
-      }
       performCheckIn(matchingCp.id, "QR");
     } else {
       setScanResult({
@@ -1087,6 +1128,7 @@ export default function App() {
     setEditCpPoints(cp.points);
     setEditCpLat(cp.lat || "");
     setEditCpLng(cp.lng || "");
+    setEditCpClue(cp.clue || "");
   };
 
   const handleDeleteCheckpoint = async (id) => {
@@ -1111,6 +1153,7 @@ export default function App() {
       points: 10,
       lat: 0,
       lng: 0,
+      clue: "",
     };
     const newList = [...checkpoints, newCp];
     const cpConfigRef = doc(
@@ -1148,6 +1191,7 @@ export default function App() {
           points: parseInt(editCpPoints, 10) || 0,
           lat: editCpLat,
           lng: editCpLng,
+          clue: editCpClue,
         };
       }
       return cp;
@@ -1676,6 +1720,50 @@ export default function App() {
         </div>
       )}
 
+      {/* CLUE VIEWING MODAL (Re-opening a found clue) */}
+      {viewingClueCp && (
+        <div className="fixed inset-0 z-[60] bg-stone-900/80 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl relative">
+            <button
+              onClick={() => setViewingClueCp(null)}
+              className="absolute top-4 right-4 p-2 bg-stone-100 rounded-full hover:bg-stone-200"
+            >
+              <CloseIcon className="w-5 h-5 text-stone-500" />
+            </button>
+
+            <div className="flex flex-col items-center text-center space-y-4 pt-4">
+              <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
+                <MessageIcon className="w-8 h-8" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">
+                  Message from
+                </div>
+                <h3 className="text-2xl font-black text-stone-800">
+                  {viewingClueCp.name}
+                </h3>
+              </div>
+
+              <div className="bg-stone-50 p-6 rounded-2xl border border-stone-100 w-full">
+                <p className="text-lg font-medium text-stone-700 italic">
+                  "
+                  {viewingClueCp.clue ||
+                    "No message attached to this checkpoint."}
+                  "
+                </p>
+              </div>
+
+              <button
+                onClick={() => setViewingClueCp(null)}
+                className="w-full bg-stone-900 text-white font-bold py-3 rounded-xl mt-4"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedTeamDetail && (
         <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 animate-in fade-in zoom-in-95 duration-200">
           <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl relative z-10">
@@ -1759,10 +1847,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Scan Result */}
+      {/* Scan Result Modal with Clue Support */}
       {scanResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-xs p-6 text-center shadow-2xl">
+          <div className="bg-white rounded-3xl w-full max-w-xs p-6 text-center shadow-2xl overflow-y-auto max-h-[80vh]">
             <div
               className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${
                 scanResult.status === "success"
@@ -1776,6 +1864,7 @@ export default function App() {
                 <AlertCircleIcon className="w-10 h-10" />
               )}
             </div>
+
             <h3 className="text-2xl font-black text-stone-800 mb-2">
               {scanResult.status === "success"
                 ? `+${scanResult.points} pts`
@@ -1784,6 +1873,19 @@ export default function App() {
             <p className="text-stone-500 font-medium mb-6">
               {scanResult.message}
             </p>
+
+            {/* Display Clue if present */}
+            {scanResult.status === "success" && scanResult.clue && (
+              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6 text-left relative">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-100 text-blue-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                  New Clue Unlocked
+                </div>
+                <p className="text-stone-800 font-medium italic text-center">
+                  "{scanResult.clue}"
+                </p>
+              </div>
+            )}
+
             <button
               onClick={() => setScanResult(null)}
               className="w-full bg-stone-900 text-white font-bold py-4 rounded-2xl"
@@ -1905,6 +2007,16 @@ export default function App() {
                         className="bg-stone-100 text-stone-600 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2"
                       >
                         Scan <QrCodeIcon className="w-3 h-3" />
+                      </button>
+                    )}
+                    {/* View Clue Button for Scanned Items */}
+                    {isScanned && (
+                      <button
+                        onClick={() => setViewingClueCp(cp)}
+                        className="text-blue-500 bg-blue-50 p-2 rounded-xl hover:bg-blue-100 transition"
+                        title="View Message"
+                      >
+                        <EyeIcon className="w-5 h-5" />
                       </button>
                     )}
                   </div>
@@ -2053,6 +2165,13 @@ export default function App() {
                           placeholder="Lng"
                         />
                       </div>
+                      <textarea
+                        className="w-full border rounded p-2 text-sm"
+                        value={editCpClue}
+                        onChange={(e) => setEditCpClue(e.target.value)}
+                        placeholder="Clue / Message (shown after check-in)"
+                        rows={2}
+                      />
                       <div className="flex justify-end gap-2">
                         <button
                           onClick={() => setEditingCpId(null)}
@@ -2076,6 +2195,11 @@ export default function App() {
                         </div>
                         <div className="text-xs text-stone-400 flex gap-2 mt-1">
                           <span>{cp.points} pts</span>
+                          {cp.clue && (
+                            <span className="text-blue-500 flex items-center gap-0.5">
+                              <MessageIcon className="w-3 h-3" /> Msg
+                            </span>
+                          )}
                           {(!cp.lat || !cp.lng) &&
                             raceConfig?.checkInMethod === "GPS" && (
                               <span className="text-red-400 flex items-center gap-1">
