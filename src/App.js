@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { initializeApp, getApp } from "firebase/app";
+import { Html5QrcodeScanner } from "html5-qrcode"; // REQUIRES: npm install html5-qrcode
 import {
   getAuth,
   signInAnonymously,
@@ -13,7 +14,6 @@ import {
   collection,
   doc,
   setDoc,
-  getDoc,
   onSnapshot,
   updateDoc,
   arrayUnion,
@@ -21,7 +21,6 @@ import {
   deleteDoc,
   getDocs,
   writeBatch,
-  runTransaction,
   enableIndexedDbPersistence,
 } from "firebase/firestore";
 
@@ -296,25 +295,6 @@ const EditIcon = (props) => (
   </svg>
 );
 
-const SaveIcon = (props) => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    {...props}
-  >
-    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-    <polyline points="17 21 17 13 7 13 7 21" />
-    <polyline points="7 3 7 8 15 8" />
-  </svg>
-);
-
 const ArrowLeftIcon = (props) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -350,24 +330,6 @@ const GpsIcon = (props) => (
     <path d="M2 12h20" />
     <circle cx="12" cy="12" r="7" />
     <circle cx="12" cy="12" r="2" />
-  </svg>
-);
-
-const FlagIcon = (props) => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    {...props}
-  >
-    <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-    <line x1="4" x2="4" y1="22" y2="15" />
   </svg>
 );
 
@@ -433,7 +395,7 @@ const WifiOffIcon = (props) => (
   </svg>
 );
 
-const ArchiveIcon = (props) => (
+const CloseIcon = (props) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width="24"
@@ -446,9 +408,8 @@ const ArchiveIcon = (props) => (
     strokeLinejoin="round"
     {...props}
   >
-    <rect width="20" height="5" x="2" y="3" rx="1" />
-    <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
-    <path d="M10 12h4" />
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
   </svg>
 );
 
@@ -540,11 +501,51 @@ const compressImage = (file) => {
 const generateRaceCode = () =>
   Math.random().toString(36).substring(2, 6).toUpperCase();
 
+// --- QR Scanner Component ---
+const QrScanner = ({ onScan, onClose }) => {
+  useEffect(() => {
+    const scanner = new Html5QrcodeScanner(
+      "reader",
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      false
+    );
+
+    scanner.render(
+      (decodedText) => {
+        onScan(decodedText);
+        scanner.clear();
+      },
+      (error) => {
+        // console.warn(error);
+      }
+    );
+
+    return () => {
+      scanner
+        .clear()
+        .catch((error) => console.error("Failed to clear scanner", error));
+    };
+  }, [onScan]);
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center">
+      <button
+        onClick={onClose}
+        className="absolute top-6 right-6 text-white bg-white/20 p-2 rounded-full z-50"
+      >
+        <CloseIcon className="w-8 h-8" />
+      </button>
+      <div id="reader" className="w-full max-w-sm bg-black"></div>
+      <p className="text-white mt-4 font-bold animate-pulse">Scanning...</p>
+    </div>
+  );
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
 
   // -- Global State --
-  const [view, setView] = useState("landing"); // landing, create, join, race, master_login, master_dashboard
+  const [view, setView] = useState("landing");
   const [raceCode, setRaceCode] = useState("");
 
   // -- Race Data State --
@@ -579,6 +580,11 @@ export default function App() {
   const [scanResult, setScanResult] = useState(null);
   const [gpsLoadingId, setGpsLoadingId] = useState(null);
   const [selectedTeamDetail, setSelectedTeamDetail] = useState(null);
+
+  // -- QR UI States --
+  const [showQrScanner, setShowQrScanner] = useState(false);
+  const [scanningCpId, setScanningCpId] = useState(null); // Used if we want to force scan specific point, but usually we just scan any
+  const [adminQrModalId, setAdminQrModalId] = useState(null); // Which QR code Admin is viewing
 
   // -- Admin UI State --
   const [newTeamName, setNewTeamName] = useState("");
@@ -616,7 +622,6 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Enable Offline Persistence
         try {
           await enableIndexedDbPersistence(db);
         } catch (err) {
@@ -625,7 +630,6 @@ export default function App() {
             err
           );
         }
-
         await setPersistence(auth, browserLocalPersistence);
         await signInAnonymously(auth);
       } catch (err) {
@@ -729,7 +733,6 @@ export default function App() {
     }
   };
 
-  // ... [Other Handlers remain the same] ...
   const handleFileChange = async (e, field) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -761,6 +764,7 @@ export default function App() {
         adminPassword: createForm.password,
         backgroundUrl: createForm.bgUrl || "background_image.jpg",
         logoUrl: createForm.logoUrl || "image.jpg",
+        checkInMethod: "GPS", // Default to GPS
         teamsList: ["Team A", "Team B"],
         checkpointsList: DEFAULT_CHECKPOINTS,
         createdAt: new Date(),
@@ -777,16 +781,6 @@ export default function App() {
     e.preventDefault();
     if (!joinCode) return;
     const code = joinCode.toUpperCase();
-    const raceRef = doc(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "races",
-      code
-    );
-    // For offline support, we try to load. If offline, it might use cache if visited before.
     loadRace(code);
   };
 
@@ -835,7 +829,6 @@ export default function App() {
       return;
     setLoading(true);
     try {
-      // 1. Delete teams subcollection docs (client-side batch)
       const teamsRef = collection(
         db,
         "artifacts",
@@ -850,7 +843,6 @@ export default function App() {
       const batch = writeBatch(db);
       teamsSnap.forEach((doc) => batch.delete(doc.ref));
 
-      // 2. Delete race doc
       const raceRef = doc(
         db,
         "artifacts",
@@ -863,8 +855,6 @@ export default function App() {
       batch.delete(raceRef);
 
       await batch.commit();
-
-      // Refresh list
       setAllRaces((prev) => prev.filter((r) => r.id !== raceId));
     } catch (e) {
       alert("Delete failed: " + e.message);
@@ -888,7 +878,6 @@ export default function App() {
     } else {
       setLoading(true);
       try {
-        // Creating team doc if it doesn't exist. Offline this queues a write.
         const teamRef = doc(
           db,
           "artifacts",
@@ -900,16 +889,7 @@ export default function App() {
           "teams",
           selectedIdentity
         );
-        // We can use setDoc with merge to be safe offline (it creates or updates)
-        setDoc(
-          teamRef,
-          {
-            name: selectedIdentity,
-            // Only set these if creating fresh, but merge handles existing data preservation
-          },
-          { merge: true }
-        );
-
+        setDoc(teamRef, { name: selectedIdentity }, { merge: true });
         setTeamName(selectedIdentity);
         localStorage.setItem(`omm_team_${raceCode}`, selectedIdentity);
         setActiveTab("game");
@@ -921,20 +901,73 @@ export default function App() {
     }
   };
 
-  // -- GPS CHECKIN - OFFLINE ENABLED --
+  // -- SHARED CHECK IN LOGIC --
+  const performCheckIn = async (cpId, method) => {
+    const checkpoint = checkpoints.find((c) => c.id === cpId);
+
+    // Safety check
+    if (!checkpoint) {
+      setScanResult({
+        status: "error",
+        message: "Invalid Checkpoint ID detected.",
+      });
+      return;
+    }
+
+    // Check duplication
+    if (myTeamData?.scanned?.includes(cpId)) {
+      setScanResult({
+        status: "error",
+        message: `Already checked in at ${checkpoint.name}!`,
+      });
+      return;
+    }
+
+    try {
+      const teamRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "races",
+        raceCode,
+        "teams",
+        teamName
+      );
+      const points = parseInt(checkpoint.points, 10) || 0;
+
+      await updateDoc(teamRef, {
+        score: increment(points),
+        scanned: arrayUnion(cpId),
+        scanHistory: arrayUnion({
+          id: cpId,
+          name: checkpoint.name,
+          points: points,
+          timestamp: new Date().toISOString(),
+          method: method,
+        }),
+        lastUpdated: new Date(),
+      });
+
+      setScanResult({
+        status: "success",
+        message: `Checked in at ${checkpoint.name}!`,
+        points: points,
+      });
+    } catch (err) {
+      console.error("Save Error", err);
+      setScanResult({ status: "error", message: "Save failed. Try again." });
+    }
+  };
+
+  // -- GPS CHECKIN --
   const handleGpsCheckIn = async (cpId) => {
     setGpsLoadingId(cpId);
     const checkpoint = checkpoints.find((c) => c.id === cpId);
 
     if (!checkpoint || !checkpoint.lat || !checkpoint.lng) {
       setScanResult({ status: "error", message: "Invalid GPS coordinates." });
-      setGpsLoadingId(null);
-      return;
-    }
-
-    // Local check prevents duplicate scanning even offline
-    if (myTeamData?.scanned?.includes(cpId)) {
-      setScanResult({ status: "error", message: "Already checked in!" });
       setGpsLoadingId(null);
       return;
     }
@@ -955,44 +988,7 @@ export default function App() {
         );
 
         if (dist <= GPS_RADIUS_METERS) {
-          try {
-            const teamRef = doc(
-              db,
-              "artifacts",
-              appId,
-              "public",
-              "data",
-              "races",
-              raceCode,
-              "teams",
-              teamName
-            );
-            const points = parseInt(checkpoint.points, 10) || 0;
-
-            // OFFLINE CHANGE: Use updateDoc instead of runTransaction.
-            // updateDoc works offline (queues writes). Transaction requires network.
-            await updateDoc(teamRef, {
-              score: increment(points),
-              scanned: arrayUnion(cpId),
-              scanHistory: arrayUnion({
-                id: cpId,
-                name: checkpoint.name,
-                points: points,
-                timestamp: new Date().toISOString(),
-                method: "GPS",
-              }),
-              lastUpdated: new Date(),
-            });
-
-            setScanResult({
-              status: "success",
-              message: `Checked in at ${checkpoint.name}!`,
-              points: points,
-            });
-          } catch (err) {
-            console.error("Save Error", err);
-            setScanResult({ status: "error", message: "Save failed." });
-          }
+          await performCheckIn(cpId, "GPS");
         } else {
           const rounded = Math.max(100, Math.round(dist / 100) * 100);
           setScanResult({
@@ -1013,7 +1009,48 @@ export default function App() {
     );
   };
 
+  // -- QR CHECKIN --
+  const handleQrScan = (decodedText) => {
+    // Close scanner first
+    setShowQrScanner(false);
+
+    // Look for a checkpoint with this ID
+    const matchingCp = checkpoints.find((c) => c.id === decodedText);
+
+    if (matchingCp) {
+      if (scanningCpId && scanningCpId !== matchingCp.id) {
+        // If user clicked "Scan" on a specific CP list item, warn if they scanned a different one
+        // Optional logic: we can just accept it anyway. Let's accept it but maybe show the name.
+      }
+      performCheckIn(matchingCp.id, "QR");
+    } else {
+      setScanResult({
+        status: "error",
+        message: `Unknown QR Code: ${decodedText}`,
+      });
+    }
+    setScanningCpId(null);
+  };
+
+  const startQrScanner = (targetCpId = null) => {
+    setScanningCpId(targetCpId);
+    setShowQrScanner(true);
+  };
+
   // -- Admin Actions --
+  const handleToggleCheckInMethod = async (newMethod) => {
+    const raceRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "races",
+      raceCode
+    );
+    await updateDoc(raceRef, { checkInMethod: newMethod });
+  };
+
   const handleAddTeam = async (e) => {
     e.preventDefault();
     if (!newTeamName.trim()) return;
@@ -1042,46 +1079,6 @@ export default function App() {
     );
     const newTeams = availableTeams.filter((t) => t !== name);
     await updateDoc(raceRef, { teamsList: newTeams });
-  };
-
-  const handleUpdateCheckpoint = async () => {
-    const raceRef = doc(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "races",
-      raceCode
-    );
-
-    if (!editingCpId) {
-      const newCp = {
-        id: `cp${Date.now()}`,
-        name: "New Point",
-        points: 10,
-        lat: 0,
-        lng: 0,
-      };
-      await updateDoc(raceRef, { checkpointsList: [...checkpoints, newCp] });
-      startEditingCheckpoint(newCp);
-      return;
-    }
-
-    const newCps = checkpoints.map((cp) => {
-      if (cp.id === editingCpId) {
-        return {
-          ...cp,
-          name: editCpName,
-          points: parseInt(editCpPoints) || 0,
-          lat: editCpLat,
-          lng: editCpLng,
-        };
-      }
-      return cp;
-    });
-    await updateDoc(raceRef, { checkpointsList: newCps });
-    setEditingCpId(null);
   };
 
   const startEditingCheckpoint = (cp) => {
@@ -1162,10 +1159,6 @@ export default function App() {
     } catch (e) {
       alert("Failed to save checkpoint");
     }
-  };
-
-  const cancelEdit = () => {
-    setEditingCpId(null);
   };
 
   const handleFactoryReset = async (e) => {
@@ -1256,26 +1249,6 @@ export default function App() {
     });
   };
 
-  const getRankStyle = (index) => {
-    switch (index) {
-      case 0:
-        return "bg-gradient-to-br from-yellow-100 to-yellow-200 border-yellow-300 text-yellow-800 ring-2 ring-yellow-300 ring-offset-2 ring-offset-white";
-      case 1:
-        return "bg-gradient-to-br from-slate-100 to-slate-200 border-slate-300 text-slate-700 ring-2 ring-slate-300 ring-offset-2 ring-offset-white";
-      case 2:
-        return "bg-gradient-to-br from-orange-100 to-orange-200 border-orange-300 text-orange-800 ring-2 ring-orange-300 ring-offset-2 ring-offset-white";
-      default:
-        return "bg-white border-stone-100 text-stone-500";
-    }
-  };
-
-  const getMedalIcon = (index) => {
-    if (index === 0) return "🥇";
-    if (index === 1) return "🥈";
-    if (index === 2) return "🥉";
-    return <span className="text-sm font-bold opacity-50">{index + 1}</span>;
-  };
-
   // --- Views ---
 
   if (loading)
@@ -1319,8 +1292,6 @@ export default function App() {
               <PlusIcon className="w-5 h-5" /> Set Up New Race
             </button>
           </div>
-
-          {/* Master Admin Hidden Button */}
           <button
             onClick={() => setView("master_login")}
             className="absolute -bottom-24 right-4 p-2 text-stone-500/20 hover:text-stone-500/50 transition z-20"
@@ -1466,7 +1437,7 @@ export default function App() {
                 required
               />
             </div>
-
+            {/* Image inputs... */}
             <div className="space-y-1">
               <label className="text-xs font-bold text-stone-500 uppercase">
                 Background Image
@@ -1518,7 +1489,6 @@ export default function App() {
                 </label>
               </div>
             </div>
-
             {errorMsg && <div className="text-red-400 text-sm">{errorMsg}</div>}
             <button
               type="submit"
@@ -1543,7 +1513,6 @@ export default function App() {
           >
             <ArrowLeftIcon className="w-4 h-4" /> Back
           </button>
-
           <h2 className="text-2xl font-bold text-white">Enter Race Code</h2>
           <input
             className="w-full bg-stone-800 border-stone-700 rounded-2xl px-6 py-6 text-white text-center text-4xl font-mono tracking-widest uppercase focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -1666,6 +1635,47 @@ export default function App() {
   // --- 5. RACE APP ---
   return (
     <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col">
+      {/* QR Scanner Overlay */}
+      {showQrScanner && (
+        <QrScanner
+          onScan={handleQrScan}
+          onClose={() => setShowQrScanner(false)}
+        />
+      )}
+
+      {/* Admin QR Code View Modal */}
+      {adminQrModalId && (
+        <div className="fixed inset-0 z-50 bg-stone-900/90 flex items-center justify-center p-6 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center space-y-6">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-lg text-stone-800">
+                Print QR Code
+              </h3>
+              <button
+                onClick={() => setAdminQrModalId(null)}
+                className="p-2 bg-stone-100 rounded-full"
+              >
+                <CloseIcon className="w-5 h-5 text-stone-500" />
+              </button>
+            </div>
+            <div className="border-4 border-stone-900 p-2 rounded-xl inline-block">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${adminQrModalId}`}
+                alt="QR Code"
+                className="w-48 h-48"
+              />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-stone-800">Checkpoint ID:</p>
+              <p className="font-mono text-stone-500">{adminQrModalId}</p>
+            </div>
+            <div className="text-xs text-stone-400">
+              Save this image or print this screen to place at the location.
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedTeamDetail && (
         <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 animate-in fade-in zoom-in-95 duration-200">
           <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl relative z-10">
@@ -1729,6 +1739,11 @@ export default function App() {
                           {scan.method === "GPS" && (
                             <div className="text-[10px] text-blue-400 font-bold uppercase mt-1">
                               GPS Check-in
+                            </div>
+                          )}
+                          {scan.method === "QR" && (
+                            <div className="text-[10px] text-purple-400 font-bold uppercase mt-1">
+                              QR Scan
                             </div>
                           )}
                         </div>
@@ -1835,6 +1850,16 @@ export default function App() {
       <main className="flex-1 overflow-y-auto px-4 pb-32 pt-6 space-y-6">
         {activeTab === "game" && !isAdmin && (
           <div className="space-y-4">
+            {/* If check-in method is QR, we could show a big scan button at top */}
+            {raceConfig?.checkInMethod === "QR" && (
+              <button
+                onClick={() => startQrScanner()}
+                className="w-full bg-stone-800 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg mb-4 active:scale-95 transition"
+              >
+                <QrCodeIcon className="w-6 h-6" /> SCAN QR CODE
+              </button>
+            )}
+
             {checkpoints.map((cp, idx) => {
               const isScanned = myTeamData?.scanned?.includes(cp.id);
               return (
@@ -1864,7 +1889,7 @@ export default function App() {
                         {cp.points} pts
                       </div>
                     </div>
-                    {!isScanned && (
+                    {!isScanned && raceConfig?.checkInMethod === "GPS" && (
                       <button
                         onClick={() => handleGpsCheckIn(cp.id)}
                         disabled={gpsLoadingId === cp.id}
@@ -1872,6 +1897,14 @@ export default function App() {
                       >
                         {gpsLoadingId === cp.id ? "..." : "Check In"}{" "}
                         <GpsIcon className="w-3 h-3" />
+                      </button>
+                    )}
+                    {!isScanned && raceConfig?.checkInMethod === "QR" && (
+                      <button
+                        onClick={() => startQrScanner(cp.id)}
+                        className="bg-stone-100 text-stone-600 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2"
+                      >
+                        Scan <QrCodeIcon className="w-3 h-3" />
                       </button>
                     )}
                   </div>
@@ -1912,6 +1945,40 @@ export default function App() {
         {/* Admin Tabs */}
         {activeTab === "manage" && isAdmin && (
           <div className="space-y-8">
+            {/* Checkin Method Toggle */}
+            <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm">
+              <h3 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">
+                Race Settings
+              </h3>
+              <div className="flex bg-stone-100 p-1 rounded-xl">
+                <button
+                  onClick={() => handleToggleCheckInMethod("GPS")}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                    raceConfig?.checkInMethod !== "QR"
+                      ? "bg-white shadow text-stone-800"
+                      : "text-stone-400"
+                  }`}
+                >
+                  GPS Mode
+                </button>
+                <button
+                  onClick={() => handleToggleCheckInMethod("QR")}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                    raceConfig?.checkInMethod === "QR"
+                      ? "bg-white shadow text-stone-800"
+                      : "text-stone-400"
+                  }`}
+                >
+                  QR Mode
+                </button>
+              </div>
+              <div className="mt-3 text-xs text-stone-500">
+                {raceConfig?.checkInMethod === "QR"
+                  ? "Users must scan QR codes placed at locations."
+                  : "Users must be physically within 30m of coordinates."}
+              </div>
+            </div>
+
             <div className="space-y-4">
               <h3 className="font-bold text-stone-800 px-2">Teams</h3>
               <form onSubmit={handleAddTeam} className="flex gap-2">
@@ -2009,14 +2076,24 @@ export default function App() {
                         </div>
                         <div className="text-xs text-stone-400 flex gap-2 mt-1">
                           <span>{cp.points} pts</span>
-                          {(!cp.lat || !cp.lng) && (
-                            <span className="text-red-400 flex items-center gap-1">
-                              <AlertCircleIcon className="w-3 h-3" /> No GPS
-                            </span>
-                          )}
+                          {(!cp.lat || !cp.lng) &&
+                            raceConfig?.checkInMethod === "GPS" && (
+                              <span className="text-red-400 flex items-center gap-1">
+                                <AlertCircleIcon className="w-3 h-3" /> No GPS
+                              </span>
+                            )}
                         </div>
                       </div>
                       <div className="flex gap-2">
+                        {raceConfig?.checkInMethod === "QR" && (
+                          <button
+                            onClick={() => setAdminQrModalId(cp.id)}
+                            className="p-2 bg-stone-100 rounded-lg text-stone-600 hover:bg-stone-200"
+                            title="View QR"
+                          >
+                            <QrCodeIcon className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => startEditingCheckpoint(cp)}
                           className="p-2 bg-stone-50 rounded-lg text-stone-500"
@@ -2132,7 +2209,6 @@ export default function App() {
                 <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
                 <span className="text-[10px] font-bold">Ranks</span>
               </button>
-              {/* QR Codes Tab - Optional now that we are GPS based */}
             </>
           )}
         </div>
