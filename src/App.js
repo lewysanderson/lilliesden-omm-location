@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { initializeApp, getApp } from "firebase/app";
-import { Html5Qrcode } from "html5-qrcode"; // CHANGED: Using Core Library, not Scanner Widget
+import { Html5Qrcode } from "html5-qrcode";
 import {
   getAuth,
   signInAnonymously,
@@ -1708,528 +1708,336 @@ export default function App() {
 
   // --- 5. RACE APP ---
   return (
-    <div className="min-h-screen bg-stone-50 font-sans max-w-md mx-auto shadow-2xl relative flex flex-col">
-      {/* QR Scanner Overlay */}
-      {showQrScanner && (
-        <QrScanner
-          onScan={handleQrScan}
-          onClose={() => setShowQrScanner(false)}
+    <div className="min-h-screen font-sans max-w-md mx-auto shadow-2xl relative flex flex-col">
+      {/* BACKGROUND LAYER (FIXED) */}
+      <div className="fixed inset-0 z-0">
+        <img
+          src={raceConfig?.backgroundUrl || "background_image.jpg"}
+          className="w-full h-full object-cover"
+          alt="bg"
         />
-      )}
+        <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-md"></div>
+      </div>
 
-      {/* Admin QR Code View Modal */}
-      {adminQrModalId && (
-        <div className="fixed inset-0 z-50 bg-stone-900/90 flex items-center justify-center p-6 animate-in fade-in">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center space-y-6">
-            <div className="flex justify-between items-center">
-              <h3 className="font-bold text-lg text-stone-800">
-                Print QR Code
-              </h3>
+      {/* CONTENT LAYER (RELATIVE) */}
+      <div className="relative z-10 flex flex-col h-full flex-1">
+        {/* QR Scanner Overlay */}
+        {showQrScanner && (
+          <QrScanner
+            onScan={handleQrScan}
+            onClose={() => setShowQrScanner(false)}
+          />
+        )}
+
+        {/* Admin QR Code View Modal */}
+        {adminQrModalId && (
+          <div className="fixed inset-0 z-50 bg-stone-900/90 flex items-center justify-center p-6 animate-in fade-in">
+            <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center space-y-6">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-lg text-stone-800">
+                  Print QR Code
+                </h3>
+                <button
+                  onClick={() => setAdminQrModalId(null)}
+                  className="p-2 bg-stone-100 rounded-full"
+                >
+                  <CloseIcon className="w-5 h-5 text-stone-500" />
+                </button>
+              </div>
+              <div className="border-4 border-stone-900 p-2 rounded-xl inline-block">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${adminQrModalId}`}
+                  alt="QR Code"
+                  className="w-48 h-48"
+                />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-stone-800">
+                  Checkpoint ID:
+                </p>
+                <p className="font-mono text-stone-500">{adminQrModalId}</p>
+              </div>
+              <div className="text-xs text-stone-400">
+                Save this image or print this screen to place at the location.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CLUE VIEWING MODAL (Re-opening a found clue) */}
+        {viewingClueCp && (
+          <div className="fixed inset-0 z-[60] bg-stone-900/80 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in">
+            <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl relative">
               <button
-                onClick={() => setAdminQrModalId(null)}
-                className="p-2 bg-stone-100 rounded-full"
+                onClick={() => setViewingClueCp(null)}
+                className="absolute top-4 right-4 p-2 bg-stone-100 rounded-full hover:bg-stone-200"
               >
                 <CloseIcon className="w-5 h-5 text-stone-500" />
               </button>
-            </div>
-            <div className="border-4 border-stone-900 p-2 rounded-xl inline-block">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${adminQrModalId}`}
-                alt="QR Code"
-                className="w-48 h-48"
-              />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-stone-800">Checkpoint ID:</p>
-              <p className="font-mono text-stone-500">{adminQrModalId}</p>
-            </div>
-            <div className="text-xs text-stone-400">
-              Save this image or print this screen to place at the location.
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* CLUE VIEWING MODAL (Re-opening a found clue) */}
-      {viewingClueCp && (
-        <div className="fixed inset-0 z-[60] bg-stone-900/80 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl relative">
-            <button
-              onClick={() => setViewingClueCp(null)}
-              className="absolute top-4 right-4 p-2 bg-stone-100 rounded-full hover:bg-stone-200"
-            >
-              <CloseIcon className="w-5 h-5 text-stone-500" />
-            </button>
-
-            <div className="flex flex-col items-center text-center space-y-4 pt-4">
-              <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
-                <MessageIcon className="w-8 h-8" />
-              </div>
-              <div>
-                <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">
-                  Message from
+              <div className="flex flex-col items-center text-center space-y-4 pt-4">
+                <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
+                  <MessageIcon className="w-8 h-8" />
                 </div>
-                <h3 className="text-2xl font-black text-stone-800">
-                  {viewingClueCp.name}
-                </h3>
-              </div>
-
-              <div className="bg-stone-50 p-6 rounded-2xl border border-stone-100 w-full">
-                <p className="text-lg font-medium text-stone-700 italic">
-                  "
-                  {viewingClueCp.clue ||
-                    "No message attached to this checkpoint."}
-                  "
-                </p>
-              </div>
-
-              <button
-                onClick={() => setViewingClueCp(null)}
-                className="w-full bg-stone-900 text-white font-bold py-3 rounded-xl mt-4"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedTeamDetail && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 animate-in fade-in zoom-in-95 duration-200">
-          <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl relative z-10">
-            <button
-              onClick={() => setSelectedTeamDetail(null)}
-              className="absolute top-6 left-6 p-2 bg-white/10 rounded-full hover:bg-white/20 transition"
-            >
-              <ArrowLeftIcon className="w-5 h-5 text-white" />
-            </button>
-            <div className="mt-8 text-center">
-              <h2 className="text-2xl font-black">{selectedTeamDetail.name}</h2>
-              <div className="text-stone-400 text-sm font-medium mt-1">
-                Trail Log
-              </div>
-              <div className="mt-4 flex justify-center gap-4">
-                <div className="bg-emerald-500/20 px-4 py-2 rounded-xl border border-emerald-500/30">
-                  <div className="text-xs text-emerald-400 uppercase font-bold tracking-wider">
-                    Points
+                <div>
+                  <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">
+                    Message from
                   </div>
-                  <div className="text-2xl font-black text-emerald-100">
-                    {selectedTeamDetail.score}
-                  </div>
+                  <h3 className="text-2xl font-black text-stone-800">
+                    {viewingClueCp.name}
+                  </h3>
                 </div>
-                <div className="bg-blue-500/20 px-4 py-2 rounded-xl border border-blue-500/30">
-                  <div className="text-xs text-blue-400 uppercase font-bold tracking-wider">
-                    Found
-                  </div>
-                  <div className="text-2xl font-black text-blue-100">
-                    {selectedTeamDetail.scanned?.length || 0}
-                  </div>
+
+                <div className="bg-stone-50 p-6 rounded-2xl border border-stone-100 w-full">
+                  <p className="text-lg font-medium text-stone-700 italic">
+                    "
+                    {viewingClueCp.clue ||
+                      "No message attached to this checkpoint."}
+                    "
+                  </p>
                 </div>
-              </div>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {!selectedTeamDetail.scanHistory ||
-            selectedTeamDetail.scanHistory.length === 0 ? (
-              <div className="text-center text-stone-400 mt-10">
-                No checkpoints found yet.
-              </div>
-            ) : (
-              [...selectedTeamDetail.scanHistory]
-                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-                .map((scan, index, arr) => (
-                  <div key={index} className="flex gap-4 relative">
-                    {index !== arr.length - 1 && (
-                      <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-stone-200"></div>
-                    )}
-                    <div className="flex-shrink-0 mt-1">
-                      <div className="w-6 h-6 rounded-full bg-emerald-500 border-4 border-emerald-100 shadow-sm"></div>
-                    </div>
-                    <div className="flex-1 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="font-bold text-stone-800">
-                            {scan.name || "Unknown"}
-                          </div>
-                          <div className="text-xs text-stone-400 font-mono mt-1">
-                            {formatTime(scan.timestamp)}
-                          </div>
-                          {scan.method === "GPS" && (
-                            <div className="text-[10px] text-blue-400 font-bold uppercase mt-1">
-                              GPS Check-in
-                            </div>
-                          )}
-                          {scan.method === "QR" && (
-                            <div className="text-[10px] text-purple-400 font-bold uppercase mt-1">
-                              QR Scan
-                            </div>
-                          )}
-                        </div>
-                        <div className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-1 rounded-lg">
-                          +{scan.points}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* Scan Result Modal with Clue Support */}
-      {scanResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-xs p-6 text-center shadow-2xl overflow-y-auto max-h-[80vh]">
-            <div
-              className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${
-                scanResult.status === "success"
-                  ? "bg-emerald-100 text-emerald-600"
-                  : "bg-red-100 text-red-500"
-              }`}
-            >
-              {scanResult.status === "success" ? (
-                <TrophyIcon className="w-10 h-10" />
-              ) : (
-                <AlertCircleIcon className="w-10 h-10" />
-              )}
-            </div>
-
-            <h3 className="text-2xl font-black text-stone-800 mb-2">
-              {scanResult.status === "success"
-                ? `+${scanResult.points} pts`
-                : "Alert"}
-            </h3>
-            <p className="text-stone-500 font-medium mb-6">
-              {scanResult.message}
-            </p>
-
-            {/* Display Clue if present */}
-            {scanResult.status === "success" && scanResult.clue && (
-              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6 text-left relative">
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-100 text-blue-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                  New Clue Unlocked
-                </div>
-                <p className="text-stone-800 font-medium italic text-center">
-                  "{scanResult.clue}"
-                </p>
-              </div>
-            )}
-
-            <button
-              onClick={() => setScanResult(null)}
-              className="w-full bg-stone-900 text-white font-bold py-4 rounded-2xl"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="bg-white pb-6 pt-4 px-6 rounded-b-[2.5rem] shadow-lg z-10 sticky top-0 border-b border-stone-100">
-        <div className="flex justify-between items-start mb-6">
-          <div className="flex flex-col">
-            <span className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-1">
-              {isAdmin ? "Admin Mode" : "Team"}
-            </span>
-            <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
-              {isAdmin ? "Race Manager" : teamName}
-            </h2>
-          </div>
-          <div className="flex gap-2 items-center">
-            <div
-              className={`px-2 py-1 rounded text-[10px] font-bold ${
-                isOnline
-                  ? "bg-emerald-100 text-emerald-700"
-                  : "bg-red-100 text-red-700"
-              }`}
-            >
-              {isOnline ? (
-                <WifiIcon className="w-3 h-3" />
-              ) : (
-                <WifiOffIcon className="w-3 h-3" />
-              )}
-            </div>
-            <button
-              onClick={handleLogout}
-              className="w-8 h-8 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 hover:bg-red-50 hover:text-red-500"
-            >
-              <LockIcon className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-        {!isAdmin && (
-          <div className="bg-stone-900 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
-            <div className="relative z-10 flex justify-between items-end">
-              <div>
-                <div className="text-stone-400 text-xs font-bold uppercase tracking-widest mb-1">
-                  Score
-                </div>
-                <div className="text-5xl font-black tracking-tighter">
-                  {myTeamData?.score || 0}
-                </div>
-              </div>
-              <div className="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs font-medium text-stone-300">
-                {myTeamData?.scanned?.length || 0} / {checkpoints.length}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Main */}
-      <main className="flex-1 overflow-y-auto px-4 pb-32 pt-6 space-y-6">
-        {activeTab === "game" && !isAdmin && (
-          <div className="space-y-4">
-            {/* If check-in method is QR, we could show a big scan button at top */}
-            {raceConfig?.checkInMethod === "QR" && (
-              <button
-                onClick={() => startQrScanner()}
-                className="w-full bg-stone-800 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg mb-4 active:scale-95 transition"
-              >
-                <QrCodeIcon className="w-6 h-6" /> SCAN QR CODE
-              </button>
-            )}
-
-            {checkpoints.map((cp, idx) => {
-              const isScanned = myTeamData?.scanned?.includes(cp.id);
-              return (
-                <div
-                  key={cp.id}
-                  className="relative flex items-center gap-4 py-2"
+                <button
+                  onClick={() => setViewingClueCp(null)}
+                  className="w-full bg-stone-900 text-white font-bold py-3 rounded-xl mt-4"
                 >
-                  <div
-                    className={`flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-white ${
-                      isScanned
-                        ? "border-emerald-500 text-emerald-500"
-                        : "border-stone-300 text-stone-300"
-                    }`}
-                  >
-                    {isScanned ? (
-                      <CheckCircleIcon className="w-5 h-5" />
-                    ) : (
-                      <span className="text-xs font-bold">{idx + 1}</span>
-                    )}
-                  </div>
-                  <div className="flex-1 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm flex justify-between items-center">
-                    <div>
-                      <div className="font-bold text-stone-800 text-sm">
-                        {cp.name}
-                      </div>
-                      <div className="text-xs text-stone-400 flex gap-2 mt-1">
-                        <span>{cp.points} pts</span>
-                        {cp.clue && (
-                          <span className="text-blue-500 flex items-center gap-0.5">
-                            <MessageIcon className="w-3 h-3" /> Msg
-                          </span>
-                        )}
-                        {(!cp.lat || !cp.lng) &&
-                          raceConfig?.checkInMethod === "GPS" && (
-                            <span className="text-red-400 flex items-center gap-1">
-                              <AlertCircleIcon className="w-3 h-3" /> No GPS
-                            </span>
-                          )}
-                      </div>
-                    </div>
-                    {!isScanned && raceConfig?.checkInMethod === "GPS" && (
-                      <button
-                        onClick={() => handleGpsCheckIn(cp.id)}
-                        disabled={gpsLoadingId === cp.id}
-                        className="bg-stone-900 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50"
-                      >
-                        {gpsLoadingId === cp.id ? "..." : "Check In"}{" "}
-                        <GpsIcon className="w-3 h-3" />
-                      </button>
-                    )}
-                    {!isScanned && raceConfig?.checkInMethod === "QR" && (
-                      <button
-                        onClick={() => startQrScanner(cp.id)}
-                        className="bg-stone-100 text-stone-600 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2"
-                      >
-                        Scan <QrCodeIcon className="w-3 h-3" />
-                      </button>
-                    )}
-                    {/* View Clue Button for Scanned Items */}
-                    {isScanned && (
-                      <button
-                        onClick={() => setViewingClueCp(cp)}
-                        className="text-blue-500 bg-blue-50 p-2 rounded-xl hover:bg-blue-100 transition"
-                        title="View Message"
-                      >
-                        <EyeIcon className="w-5 h-5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Leaderboard */}
-        {activeTab === "leaderboard" && (
-          <div className="space-y-3">
-            {teams.map((t, idx) => (
+        {selectedTeamDetail && (
+          <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-stone-900 text-white p-6 pb-8 rounded-b-3xl shadow-xl relative z-10">
+              <button
+                onClick={() => setSelectedTeamDetail(null)}
+                className="absolute top-6 left-6 p-2 bg-white/10 rounded-full hover:bg-white/20 transition"
+              >
+                <ArrowLeftIcon className="w-5 h-5 text-white" />
+              </button>
+              <div className="mt-8 text-center">
+                <h2 className="text-2xl font-black">
+                  {selectedTeamDetail.name}
+                </h2>
+                <div className="text-stone-400 text-sm font-medium mt-1">
+                  Trail Log
+                </div>
+                <div className="mt-4 flex justify-center gap-4">
+                  <div className="bg-emerald-500/20 px-4 py-2 rounded-xl border border-emerald-500/30">
+                    <div className="text-xs text-emerald-400 uppercase font-bold tracking-wider">
+                      Points
+                    </div>
+                    <div className="text-2xl font-black text-emerald-100">
+                      {selectedTeamDetail.score}
+                    </div>
+                  </div>
+                  <div className="bg-blue-500/20 px-4 py-2 rounded-xl border border-blue-500/30">
+                    <div className="text-xs text-blue-400 uppercase font-bold tracking-wider">
+                      Found
+                    </div>
+                    <div className="text-2xl font-black text-blue-100">
+                      {selectedTeamDetail.scanned?.length || 0}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {!selectedTeamDetail.scanHistory ||
+              selectedTeamDetail.scanHistory.length === 0 ? (
+                <div className="text-center text-stone-400 mt-10">
+                  No checkpoints found yet.
+                </div>
+              ) : (
+                [...selectedTeamDetail.scanHistory]
+                  .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                  .map((scan, index, arr) => (
+                    <div key={index} className="flex gap-4 relative">
+                      {index !== arr.length - 1 && (
+                        <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-stone-200"></div>
+                      )}
+                      <div className="flex-shrink-0 mt-1">
+                        <div className="w-6 h-6 rounded-full bg-emerald-500 border-4 border-emerald-100 shadow-sm"></div>
+                      </div>
+                      <div className="flex-1 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="font-bold text-stone-800">
+                              {scan.name || "Unknown"}
+                            </div>
+                            <div className="text-xs text-stone-400 font-mono mt-1">
+                              {formatTime(scan.timestamp)}
+                            </div>
+                            {scan.method === "GPS" && (
+                              <div className="text-[10px] text-blue-400 font-bold uppercase mt-1">
+                                GPS Check-in
+                              </div>
+                            )}
+                            {scan.method === "QR" && (
+                              <div className="text-[10px] text-purple-400 font-bold uppercase mt-1">
+                                QR Scan
+                              </div>
+                            )}
+                          </div>
+                          <div className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-1 rounded-lg">
+                            +{scan.points}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Scan Result Modal with Clue Support */}
+        {scanResult && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/80 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white rounded-3xl w-full max-w-xs p-6 text-center shadow-2xl overflow-y-auto max-h-[80vh]">
               <div
-                key={t.id}
-                onClick={() => setSelectedTeamDetail(t)}
-                className={`flex items-center p-4 rounded-2xl bg-white border border-stone-100 shadow-sm cursor-pointer active:scale-95 transition-all ${
-                  idx < 3 ? "border-l-4 border-l-yellow-400" : ""
+                className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${
+                  scanResult.status === "success"
+                    ? "bg-emerald-100 text-emerald-600"
+                    : "bg-red-100 text-red-500"
                 }`}
               >
-                <div className="w-8 text-center font-bold text-stone-400">
-                  {idx + 1}
-                </div>
-                <div className="flex-1">
-                  <div className="font-bold text-stone-800">{t.name}</div>
-                  <div className="text-xs text-stone-400">
-                    {t.scanned?.length || 0} found
-                  </div>
-                </div>
-                <div className="font-black text-lg text-stone-900">
-                  {t.score}
-                </div>
+                {scanResult.status === "success" ? (
+                  <TrophyIcon className="w-10 h-10" />
+                ) : (
+                  <AlertCircleIcon className="w-10 h-10" />
+                )}
               </div>
-            ))}
+
+              <h3 className="text-2xl font-black text-stone-800 mb-2">
+                {scanResult.status === "success"
+                  ? `+${scanResult.points} pts`
+                  : "Alert"}
+              </h3>
+              <p className="text-stone-500 font-medium mb-6">
+                {scanResult.message}
+              </p>
+
+              {/* Display Clue if present */}
+              {scanResult.status === "success" && scanResult.clue && (
+                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6 text-left relative">
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-100 text-blue-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                    New Clue Unlocked
+                  </div>
+                  <p className="text-stone-800 font-medium italic text-center">
+                    "{scanResult.clue}"
+                  </p>
+                </div>
+              )}
+
+              <button
+                onClick={() => setScanResult(null)}
+                className="w-full bg-stone-900 text-white font-bold py-4 rounded-2xl"
+              >
+                OK
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Admin Tabs */}
-        {activeTab === "manage" && isAdmin && (
-          <div className="space-y-8">
-            {/* Checkin Method Toggle */}
-            <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm">
-              <h3 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">
-                Race Settings
-              </h3>
-              <div className="flex bg-stone-100 p-1 rounded-xl">
-                <button
-                  onClick={() => handleToggleCheckInMethod("GPS")}
-                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
-                    raceConfig?.checkInMethod !== "QR"
-                      ? "bg-white shadow text-stone-800"
-                      : "text-stone-400"
-                  }`}
-                >
-                  GPS Mode
-                </button>
-                <button
-                  onClick={() => handleToggleCheckInMethod("QR")}
-                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
-                    raceConfig?.checkInMethod === "QR"
-                      ? "bg-white shadow text-stone-800"
-                      : "text-stone-400"
-                  }`}
-                >
-                  QR Mode
-                </button>
-              </div>
-              <div className="mt-3 text-xs text-stone-500">
-                {raceConfig?.checkInMethod === "QR"
-                  ? "Users must scan QR codes placed at locations."
-                  : "Users must be physically within 30m of coordinates."}
-              </div>
+        {/* Header */}
+        <div className="bg-white/90 backdrop-blur-md pb-6 pt-4 px-6 rounded-b-[2.5rem] shadow-lg z-10 sticky top-0 border-b border-white/20">
+          <div className="flex justify-between items-start mb-6">
+            <div className="flex flex-col">
+              <span className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-1">
+                {isAdmin ? "Admin Mode" : "Team"}
+              </span>
+              <h2 className="text-lg font-bold text-stone-800 flex items-center gap-2">
+                {isAdmin ? "Race Manager" : teamName}
+              </h2>
             </div>
-
-            <div className="space-y-4">
-              <h3 className="font-bold text-stone-800 px-2">Teams</h3>
-              <form onSubmit={handleAddTeam} className="flex gap-2">
-                <input
-                  className="flex-1 bg-white border border-stone-200 rounded-xl px-4 py-3"
-                  placeholder="New Team Name"
-                  value={newTeamName}
-                  onChange={(e) => setNewTeamName(e.target.value)}
-                />
-                <button className="bg-stone-900 text-white p-3 rounded-xl">
-                  <PlusIcon className="w-5 h-5" />
-                </button>
-              </form>
-              <div className="space-y-2">
-                {availableTeams.map((name) => (
-                  <div
-                    key={name}
-                    className="bg-white p-4 rounded-xl border border-stone-100 flex justify-between items-center"
-                  >
-                    <span className="font-bold text-stone-700">{name}</span>
-                    <button
-                      onClick={() => handleDeleteTeam(name)}
-                      className="text-stone-300 hover:text-red-500"
-                    >
-                      <TrashIcon className="w-4 h-4" />
-                    </button>
+            <div className="flex gap-2 items-center">
+              <div
+                className={`px-2 py-1 rounded text-[10px] font-bold ${
+                  isOnline
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-red-100 text-red-700"
+                }`}
+              >
+                {isOnline ? (
+                  <WifiIcon className="w-3 h-3" />
+                ) : (
+                  <WifiOffIcon className="w-3 h-3" />
+                )}
+              </div>
+              <button
+                onClick={handleLogout}
+                className="w-8 h-8 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 hover:bg-red-50 hover:text-red-500"
+              >
+                <LockIcon className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+          {!isAdmin && (
+            <div className="bg-stone-900/90 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden backdrop-blur-sm">
+              <div className="relative z-10 flex justify-between items-end">
+                <div>
+                  <div className="text-stone-400 text-xs font-bold uppercase tracking-widest mb-1">
+                    Score
                   </div>
-                ))}
+                  <div className="text-5xl font-black tracking-tighter">
+                    {myTeamData?.score || 0}
+                  </div>
+                </div>
+                <div className="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs font-medium text-stone-300">
+                  {myTeamData?.scanned?.length || 0} / {checkpoints.length}
+                </div>
               </div>
             </div>
+          )}
+        </div>
+
+        {/* Main */}
+        <main className="flex-1 overflow-y-auto px-4 pb-32 pt-6 space-y-6">
+          {activeTab === "game" && !isAdmin && (
             <div className="space-y-4">
-              <div className="flex justify-between items-center px-2">
-                <h3 className="font-bold text-stone-800">Checkpoints</h3>
+              {/* If check-in method is QR, we could show a big scan button at top */}
+              {raceConfig?.checkInMethod === "QR" && (
                 <button
-                  onClick={handleAddCheckpoint}
-                  className="text-xs bg-emerald-100 text-emerald-700 font-bold px-3 py-1.5 rounded-lg hover:bg-emerald-200 transition flex items-center gap-1"
+                  onClick={() => startQrScanner()}
+                  className="w-full bg-stone-800 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg mb-4 active:scale-95 transition"
                 >
-                  <PlusIcon className="w-3 h-3" /> Add
+                  <QrCodeIcon className="w-6 h-6" /> SCAN QR CODE
                 </button>
-              </div>
-              {checkpoints.map((cp) => (
-                <div
-                  key={cp.id}
-                  className="bg-white p-4 rounded-xl border border-stone-100 shadow-sm space-y-3"
-                >
-                  {editingCpId === cp.id ? (
-                    <div className="space-y-2">
-                      <input
-                        className="w-full border rounded p-2 text-sm"
-                        value={editCpName}
-                        onChange={(e) => setEditCpName(e.target.value)}
-                        placeholder="Name"
-                      />
-                      <div className="flex gap-2">
-                        <input
-                          className="w-1/3 border rounded p-2 text-sm"
-                          type="number"
-                          value={editCpPoints}
-                          onChange={(e) => setEditCpPoints(e.target.value)}
-                          placeholder="Pts"
-                        />
-                        <input
-                          className="w-1/3 border rounded p-2 text-sm"
-                          value={editCpLat}
-                          onChange={(e) => setEditCpLat(e.target.value)}
-                          placeholder="Lat"
-                        />
-                        <input
-                          className="w-1/3 border rounded p-2 text-sm"
-                          value={editCpLng}
-                          onChange={(e) => setEditCpLng(e.target.value)}
-                          placeholder="Lng"
-                        />
-                      </div>
-                      <textarea
-                        className="w-full border rounded p-2 text-sm"
-                        value={editCpClue}
-                        onChange={(e) => setEditCpClue(e.target.value)}
-                        placeholder="Clue / Message (shown after check-in)"
-                        rows={2}
-                      />
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => setEditingCpId(null)}
-                          className="text-xs font-bold text-stone-500"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={() => saveCheckpoint(cp.id)}
-                          className="text-xs font-bold bg-emerald-600 text-white px-3 py-1.5 rounded-lg"
-                        >
-                          Save
-                        </button>
-                      </div>
+              )}
+
+              {checkpoints.map((cp, idx) => {
+                const isScanned = myTeamData?.scanned?.includes(cp.id);
+                return (
+                  <div
+                    key={cp.id}
+                    className="relative flex items-center gap-4 py-2"
+                  >
+                    <div
+                      className={`flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-white shadow-sm ${
+                        isScanned
+                          ? "border-emerald-500 text-emerald-500"
+                          : "border-stone-300 text-stone-300"
+                      }`}
+                    >
+                      {isScanned ? (
+                        <CheckCircleIcon className="w-5 h-5" />
+                      ) : (
+                        <span className="text-xs font-bold">{idx + 1}</span>
+                      )}
                     </div>
-                  ) : (
-                    <div className="flex justify-between items-center">
+                    <div
+                      onClick={() => {
+                        if (isScanned) setViewingClueCp(cp);
+                      }}
+                      className={`flex-1 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm flex justify-between items-center transition-all ${
+                        isScanned
+                          ? "cursor-pointer hover:bg-stone-50 hover:scale-[1.01]"
+                          : ""
+                      }`}
+                    >
                       <div>
                         <div className="font-bold text-stone-800 text-sm">
                           {cp.name}
@@ -2249,133 +2057,357 @@ export default function App() {
                             )}
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        {raceConfig?.checkInMethod === "QR" && (
-                          <button
-                            onClick={() => setAdminQrModalId(cp.id)}
-                            className="p-2 bg-stone-100 rounded-lg text-stone-600 hover:bg-stone-200"
-                            title="View QR"
-                          >
-                            <QrCodeIcon className="w-4 h-4" />
-                          </button>
-                        )}
+                      {!isScanned && raceConfig?.checkInMethod === "GPS" && (
                         <button
-                          onClick={() => startEditingCheckpoint(cp)}
-                          className="p-2 bg-stone-50 rounded-lg text-stone-500"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleGpsCheckIn(cp.id);
+                          }}
+                          disabled={gpsLoadingId === cp.id}
+                          className="bg-stone-900 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50"
                         >
-                          <EditIcon className="w-4 h-4" />
+                          {gpsLoadingId === cp.id ? "..." : "Check In"}{" "}
+                          <GpsIcon className="w-3 h-3" />
                         </button>
+                      )}
+                      {!isScanned && raceConfig?.checkInMethod === "QR" && (
                         <button
-                          onClick={() => handleDeleteCheckpoint(cp.id)}
-                          className="p-2 bg-red-50 rounded-lg text-red-400"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startQrScanner(cp.id);
+                          }}
+                          className="bg-stone-100 text-stone-600 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-2"
                         >
-                          <TrashIcon className="w-4 h-4" />
+                          Scan <QrCodeIcon className="w-3 h-3" />
                         </button>
-                      </div>
+                      )}
+                      {/* View Clue Icon for Scanned Items (Visual indicator) */}
+                      {isScanned && (
+                        <div className="text-blue-400">
+                          <EyeIcon className="w-5 h-5" />
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Leaderboard */}
+          {activeTab === "leaderboard" && (
+            <div className="space-y-3">
+              {teams.map((t, idx) => (
+                <div
+                  key={t.id}
+                  onClick={() => setSelectedTeamDetail(t)}
+                  className={`flex items-center p-4 rounded-2xl bg-white border border-stone-100 shadow-sm cursor-pointer active:scale-95 transition-all ${
+                    idx < 3 ? "border-l-4 border-l-yellow-400" : ""
+                  }`}
+                >
+                  <div className="w-8 text-center font-bold text-stone-400">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1">
+                    <div className="font-bold text-stone-800">{t.name}</div>
+                    <div className="text-xs text-stone-400">
+                      {t.scanned?.length || 0} found
+                    </div>
+                  </div>
+                  <div className="font-black text-lg text-stone-900">
+                    {t.score}
+                  </div>
                 </div>
               ))}
             </div>
-
-            <div className="mt-8 border-t-2 border-stone-100 pt-6">
-              {!showResetInput ? (
-                <button
-                  onClick={() => setShowResetInput(true)}
-                  className="w-full py-4 text-red-500 font-bold bg-red-50 rounded-2xl border border-red-100 hover:bg-red-100 transition flex items-center justify-center gap-2"
-                >
-                  <RefreshIcon className="w-5 h-5" /> Reset Application
-                </button>
-              ) : (
-                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 animate-in fade-in slide-in-from-bottom-2">
-                  <div className="text-red-800 font-bold text-sm mb-2 text-center">
-                    WARNING: This wipes all data!
-                  </div>
-                  <form onSubmit={handleFactoryReset} className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Type 'reset' to confirm"
-                      value={resetPasswordInput}
-                      onChange={(e) => setResetPasswordInput(e.target.value)}
-                      className="flex-1 px-4 py-3 rounded-xl border border-red-200 text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
-                    />
-                    <button
-                      type="submit"
-                      className="bg-red-600 text-white font-bold px-4 py-3 rounded-xl hover:bg-red-700"
-                    >
-                      Wipe
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowResetInput(false);
-                        setResetPasswordInput("");
-                      }}
-                      className="text-stone-500 px-3 hover:text-stone-700"
-                    >
-                      Cancel
-                    </button>
-                  </form>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </main>
-
-      <div className="fixed bottom-6 left-6 right-6 z-40">
-        <div className="bg-white/90 backdrop-blur-xl border border-white/20 p-2 rounded-3xl shadow-2xl flex justify-between max-w-sm mx-auto">
-          {!isAdmin ? (
-            <>
-              <button
-                onClick={() => setActiveTab("game")}
-                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
-                  activeTab === "game"
-                    ? "bg-stone-900 text-white"
-                    : "text-stone-400"
-                }`}
-              >
-                <MapIcon className="w-5 h-5 mb-0.5" />{" "}
-                <span className="text-[10px] font-bold">Trail</span>
-              </button>
-              <button
-                onClick={() => setActiveTab("leaderboard")}
-                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
-                  activeTab === "leaderboard"
-                    ? "bg-stone-900 text-white"
-                    : "text-stone-400"
-                }`}
-              >
-                <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
-                <span className="text-[10px] font-bold">Ranks</span>
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => setActiveTab("manage")}
-                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
-                  activeTab === "manage"
-                    ? "bg-stone-900 text-white"
-                    : "text-stone-400"
-                }`}
-              >
-                <SettingsIcon className="w-5 h-5 mb-0.5" />{" "}
-                <span className="text-[10px] font-bold">Manage</span>
-              </button>
-              <button
-                onClick={() => setActiveTab("leaderboard")}
-                className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
-                  activeTab === "leaderboard"
-                    ? "bg-stone-900 text-white"
-                    : "text-stone-400"
-                }`}
-              >
-                <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
-                <span className="text-[10px] font-bold">Ranks</span>
-              </button>
-            </>
           )}
+
+          {/* Admin Tabs */}
+          {activeTab === "manage" && isAdmin && (
+            <div className="space-y-8">
+              {/* Checkin Method Toggle */}
+              <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm">
+                <h3 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">
+                  Race Settings
+                </h3>
+                <div className="flex bg-stone-100 p-1 rounded-xl">
+                  <button
+                    onClick={() => handleToggleCheckInMethod("GPS")}
+                    className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                      raceConfig?.checkInMethod !== "QR"
+                        ? "bg-white shadow text-stone-800"
+                        : "text-stone-400"
+                    }`}
+                  >
+                    GPS Mode
+                  </button>
+                  <button
+                    onClick={() => handleToggleCheckInMethod("QR")}
+                    className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                      raceConfig?.checkInMethod === "QR"
+                        ? "bg-white shadow text-stone-800"
+                        : "text-stone-400"
+                    }`}
+                  >
+                    QR Mode
+                  </button>
+                </div>
+                <div className="mt-3 text-xs text-stone-500">
+                  {raceConfig?.checkInMethod === "QR"
+                    ? "Users must scan QR codes placed at locations."
+                    : "Users must be physically within 30m of coordinates."}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="font-bold text-stone-800 px-2 text-white/90 drop-shadow-md">
+                  Teams
+                </h3>
+                <form onSubmit={handleAddTeam} className="flex gap-2">
+                  <input
+                    className="flex-1 bg-white border border-stone-200 rounded-xl px-4 py-3"
+                    placeholder="New Team Name"
+                    value={newTeamName}
+                    onChange={(e) => setNewTeamName(e.target.value)}
+                  />
+                  <button className="bg-stone-900 text-white p-3 rounded-xl">
+                    <PlusIcon className="w-5 h-5" />
+                  </button>
+                </form>
+                <div className="space-y-2">
+                  {availableTeams.map((name) => (
+                    <div
+                      key={name}
+                      className="bg-white p-4 rounded-xl border border-stone-100 flex justify-between items-center"
+                    >
+                      <span className="font-bold text-stone-700">{name}</span>
+                      <button
+                        onClick={() => handleDeleteTeam(name)}
+                        className="text-stone-300 hover:text-red-500"
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center px-2">
+                  <h3 className="font-bold text-stone-800 text-white/90 drop-shadow-md">
+                    Checkpoints
+                  </h3>
+                  <button
+                    onClick={handleAddCheckpoint}
+                    className="text-xs bg-emerald-100 text-emerald-700 font-bold px-3 py-1.5 rounded-lg hover:bg-emerald-200 transition flex items-center gap-1"
+                  >
+                    <PlusIcon className="w-3 h-3" /> Add
+                  </button>
+                </div>
+                {checkpoints.map((cp) => (
+                  <div
+                    key={cp.id}
+                    className="bg-white p-4 rounded-xl border border-stone-100 shadow-sm space-y-3"
+                  >
+                    {editingCpId === cp.id ? (
+                      <div className="space-y-2">
+                        <input
+                          className="w-full border rounded p-2 text-sm"
+                          value={editCpName}
+                          onChange={(e) => setEditCpName(e.target.value)}
+                          placeholder="Name"
+                        />
+                        <div className="flex gap-2">
+                          <input
+                            className="w-1/3 border rounded p-2 text-sm"
+                            type="number"
+                            value={editCpPoints}
+                            onChange={(e) => setEditCpPoints(e.target.value)}
+                            placeholder="Pts"
+                          />
+                          <input
+                            className="w-1/3 border rounded p-2 text-sm"
+                            value={editCpLat}
+                            onChange={(e) => setEditCpLat(e.target.value)}
+                            placeholder="Lat"
+                          />
+                          <input
+                            className="w-1/3 border rounded p-2 text-sm"
+                            value={editCpLng}
+                            onChange={(e) => setEditCpLng(e.target.value)}
+                            placeholder="Lng"
+                          />
+                        </div>
+                        <textarea
+                          className="w-full border rounded p-2 text-sm"
+                          value={editCpClue}
+                          onChange={(e) => setEditCpClue(e.target.value)}
+                          placeholder="Clue / Message (shown after check-in)"
+                          rows={2}
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => setEditingCpId(null)}
+                            className="text-xs font-bold text-stone-500"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => saveCheckpoint(cp.id)}
+                            className="text-xs font-bold bg-emerald-600 text-white px-3 py-1.5 rounded-lg"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <div className="font-bold text-stone-800 text-sm">
+                            {cp.name}
+                          </div>
+                          <div className="text-xs text-stone-400 flex gap-2 mt-1">
+                            <span>{cp.points} pts</span>
+                            {cp.clue && (
+                              <span className="text-blue-500 flex items-center gap-0.5">
+                                <MessageIcon className="w-3 h-3" /> Msg
+                              </span>
+                            )}
+                            {(!cp.lat || !cp.lng) &&
+                              raceConfig?.checkInMethod === "GPS" && (
+                                <span className="text-red-400 flex items-center gap-1">
+                                  <AlertCircleIcon className="w-3 h-3" /> No GPS
+                                </span>
+                              )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          {raceConfig?.checkInMethod === "QR" && (
+                            <button
+                              onClick={() => setAdminQrModalId(cp.id)}
+                              className="p-2 bg-stone-100 rounded-lg text-stone-600 hover:bg-stone-200"
+                              title="View QR"
+                            >
+                              <QrCodeIcon className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => startEditingCheckpoint(cp)}
+                            className="p-2 bg-stone-50 rounded-lg text-stone-500"
+                          >
+                            <EditIcon className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCheckpoint(cp.id)}
+                            className="p-2 bg-red-50 rounded-lg text-red-400"
+                          >
+                            <TrashIcon className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-8 border-t-2 border-stone-100 pt-6">
+                {!showResetInput ? (
+                  <button
+                    onClick={() => setShowResetInput(true)}
+                    className="w-full py-4 text-red-500 font-bold bg-red-50 rounded-2xl border border-red-100 hover:bg-red-100 transition flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <RefreshIcon className="w-5 h-5" /> Reset Application
+                  </button>
+                ) : (
+                  <div className="bg-red-50 p-4 rounded-2xl border border-red-100 animate-in fade-in slide-in-from-bottom-2">
+                    <div className="text-red-800 font-bold text-sm mb-2 text-center">
+                      WARNING: This wipes all data!
+                    </div>
+                    <form onSubmit={handleFactoryReset} className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Type 'reset' to confirm"
+                        value={resetPasswordInput}
+                        onChange={(e) => setResetPasswordInput(e.target.value)}
+                        className="flex-1 px-4 py-3 rounded-xl border border-red-200 text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                      />
+                      <button
+                        type="submit"
+                        className="bg-red-600 text-white font-bold px-4 py-3 rounded-xl hover:bg-red-700"
+                      >
+                        Wipe
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowResetInput(false);
+                          setResetPasswordInput("");
+                        }}
+                        className="text-stone-500 px-3 hover:text-stone-700"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </main>
+
+        <div className="fixed bottom-6 left-6 right-6 z-40">
+          <div className="bg-white/90 backdrop-blur-xl border border-white/20 p-2 rounded-3xl shadow-2xl flex justify-between max-w-sm mx-auto">
+            {!isAdmin ? (
+              <>
+                <button
+                  onClick={() => setActiveTab("game")}
+                  className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                    activeTab === "game"
+                      ? "bg-stone-900 text-white"
+                      : "text-stone-400"
+                  }`}
+                >
+                  <MapIcon className="w-5 h-5 mb-0.5" />{" "}
+                  <span className="text-[10px] font-bold">Trail</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab("leaderboard")}
+                  className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                    activeTab === "leaderboard"
+                      ? "bg-stone-900 text-white"
+                      : "text-stone-400"
+                  }`}
+                >
+                  <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
+                  <span className="text-[10px] font-bold">Ranks</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setActiveTab("manage")}
+                  className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                    activeTab === "manage"
+                      ? "bg-stone-900 text-white"
+                      : "text-stone-400"
+                  }`}
+                >
+                  <SettingsIcon className="w-5 h-5 mb-0.5" />{" "}
+                  <span className="text-[10px] font-bold">Manage</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab("leaderboard")}
+                  className={`flex-1 py-3 rounded-2xl flex flex-col items-center ${
+                    activeTab === "leaderboard"
+                      ? "bg-stone-900 text-white"
+                      : "text-stone-400"
+                  }`}
+                >
+                  <TrophyIcon className="w-5 h-5 mb-0.5" />{" "}
+                  <span className="text-[10px] font-bold">Ranks</span>
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>
