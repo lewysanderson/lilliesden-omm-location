@@ -463,10 +463,9 @@ const firebaseConfig = {
   storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.REACT_APP_FIREBASE_APP_ID,
-  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
 };
 
-const appName = "lilliesden-orienteering-app-v3";
+const appName = "lomond-omm-app";
 let app;
 try {
   app = getApp(appName);
@@ -476,7 +475,7 @@ try {
 
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = "c_56f3d4b28a96223f_orienteering_app.jsx-139";
+const appId = "lomond-omm";
 
 // --- Helper Functions ---
 
