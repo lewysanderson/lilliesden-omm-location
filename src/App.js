@@ -736,6 +736,11 @@ export default function App() {
           setView("landing");
         }
         setLoading(false);
+      }, (error) => {
+        console.error("Firestore race error:", error.code, error.message);
+        setErrorMsg(`Error: ${error.code === "permission-denied" ? "Database access denied. Check Firestore security rules." : error.message}`);
+        setView("landing");
+        setLoading(false);
       });
 
       const teamsRef = collection(db, "artifacts", appId, "public", "data", "races", code, "teams");
@@ -746,6 +751,8 @@ export default function App() {
         });
         loadedTeams.sort((a, b) => b.score - a.score);
         setTeams(loadedTeams);
+      }, (error) => {
+        console.error("Firestore teams error:", error.code, error.message);
       });
 
       return () => {
@@ -754,6 +761,8 @@ export default function App() {
       };
     } catch (e) {
       console.error("Load race error", e);
+      setErrorMsg("Failed to connect. Check your internet connection.");
+      setView("landing");
       setLoading(false);
     }
   };
