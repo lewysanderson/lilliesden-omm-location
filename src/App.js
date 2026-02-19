@@ -476,7 +476,7 @@ try {
 
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
+const appId = "c_56f3d4b28a96223f_orienteering_app.jsx-139";
 
 // --- Helper Functions ---
 
