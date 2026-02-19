@@ -457,13 +457,13 @@ const DEFAULT_CHECKPOINTS = [
 const GPS_RADIUS_METERS = 30; // Check-in radius
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDG9CWHAw5fGYiBfqOkBfjaSWxvrYKmHxE",
-  authDomain: "lilliesden-orienteering.firebaseapp.com",
-  projectId: "lilliesden-orienteering",
-  storageBucket: "lilliesden-orienteering.firebasestorage.app",
-  messagingSenderId: "748298310144",
-  appId: "1:748298310144:web:e979ddb0fbbbd72add3ee5",
-  measurementId: "G-JEZHG21FJY",
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID,
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
 };
 
 const appName = "lilliesden-orienteering-app-v3";
@@ -658,16 +658,8 @@ export default function App() {
   const [editCpLng, setEditCpLng] = useState("");
   const [editCpClue, setEditCpClue] = useState("");
 
-  // Setup Online/Offline Listener & Styles
+  // Setup Online/Offline Listener
   useEffect(() => {
-    const existingScript = document.getElementById("tailwind-script");
-    if (!existingScript) {
-      const script = document.createElement("script");
-      script.id = "tailwind-script";
-      script.src = "https://cdn.tailwindcss.com";
-      document.head.appendChild(script);
-    }
-
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
@@ -875,7 +867,7 @@ export default function App() {
       setLoading(true);
       try {
         const teamRef = doc(db, "artifacts", appId, "public", "data", "races", raceCode, "teams", selectedIdentity);
-        setDoc(teamRef, { name: selectedIdentity }, { merge: true });
+        await setDoc(teamRef, { name: selectedIdentity, score: 0, scanned: [], scanHistory: [] }, { merge: true });
         setTeamName(selectedIdentity);
         localStorage.setItem(`omm_team_${raceCode}`, selectedIdentity);
         setActiveTab("game");
@@ -975,7 +967,7 @@ export default function App() {
         setScanResult({ status: "error", message: "GPS Error. Allow permissions." });
         setGpsLoadingId(null);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
     );
   };
 
