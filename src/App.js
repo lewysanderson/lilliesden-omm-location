@@ -1215,16 +1215,28 @@ export default function App() {
 
   const exportGpx = (team) => {
     const scans = [...(team.scanHistory || [])].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    const waypoints = scans.map((scan) => {
+    const attempts = [...(team.attemptLog || [])].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const successWpts = scans.map((scan) => {
       const lat = scan.userLat ?? scan.cpLat;
       const lng = scan.userLng ?? scan.cpLng;
       if (!lat || !lng) return "";
       return `  <wpt lat="${lat}" lon="${lng}">
     <time>${scan.timestamp}</time>
     <name>${scan.name}</name>
-    <desc>${scan.points} pts | ${scan.method} | ${scan.date || ""} ${scan.time || ""}${scan.userAccuracy ? ` | ±${scan.userAccuracy}m` : ""}</desc>
+    <desc>SUCCESS | ${scan.points} pts | ${scan.method} | ${scan.date || ""} ${scan.time || ""}${scan.userAccuracy ? ` | ±${scan.userAccuracy}m` : ""}</desc>
   </wpt>`;
-    }).filter(Boolean).join("\n");
+    }).filter(Boolean);
+
+    const failWpts = attempts.filter(a => a.userLat).map((attempt) => {
+      return `  <wpt lat="${attempt.userLat}" lon="${attempt.userLng}">
+    <time>${attempt.timestamp}</time>
+    <name>FAILED: ${attempt.cpName || attempt.cpId}</name>
+    <desc>FAILED | ${attempt.reason} | ${attempt.date || ""} ${attempt.time || ""}${attempt.userAccuracy ? ` | ±${attempt.userAccuracy}m` : ""}</desc>
+  </wpt>`;
+    });
+
+    const waypoints = [...successWpts, ...failWpts].join("\n");
 
     const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Lomond OMM" xmlns="http://www.topografix.com/GPX/1/1">
@@ -1620,7 +1632,7 @@ ${waypoints}
                     <div className="text-2xl font-black text-blue-100">{selectedTeamDetail.scanned?.length || 0}</div>
                   </div>
                 </div>
-                {selectedTeamDetail.scanHistory?.length > 0 && (
+                {(selectedTeamDetail.scanHistory?.length > 0 || selectedTeamDetail.attemptLog?.length > 0) && (
                   <button
                     onClick={() => exportGpx(selectedTeamDetail)}
                     className="mt-4 bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 mx-auto hover:bg-emerald-700 transition"
