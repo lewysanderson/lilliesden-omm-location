@@ -472,7 +472,7 @@ const DEFAULT_CHECKPOINTS = [
   { id: "e0", name: "E0 (Damdub Expanse)",        points: 40, lat: 56.23793036, lng: -3.232194752, clue: "" },
 ];
 
-const GPS_RADIUS_METERS = 30; // Check-in radius
+const GPS_RADIUS_METERS = 50; // Default check-in radius (can be overridden per race)
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -807,7 +807,8 @@ export default function App() {
         adminPassword: createForm.password,
         backgroundUrl: createForm.bgUrl || "background_image.jpg",
         logoUrl: createForm.logoUrl || "image.jpg",
-        checkInMethod: "GPS", 
+        checkInMethod: "GPS",
+        gpsRadius: GPS_RADIUS_METERS,
         teamsList: ["The Anderson Amblers", "The Porteous Patrollers"],
         checkpointsList: DEFAULT_CHECKPOINTS,
         createdAt: new Date(),
@@ -978,13 +979,14 @@ export default function App() {
           parseFloat(checkpoint.lng)
         );
 
-        if (dist <= GPS_RADIUS_METERS) {
+        const radius = raceConfig?.gpsRadius || GPS_RADIUS_METERS;
+        if (dist <= radius) {
           await performCheckIn(cpId, "GPS");
         } else {
-          const rounded = Math.max(100, Math.round(dist / 100) * 100);
+          const rounded = Math.round(dist);
           setScanResult({
             status: "error",
-            message: `Too far! Approx ${rounded}m away.`,
+            message: `Too far! You are ${rounded}m away (need to be within ${radius}m).`,
           });
         }
         setGpsLoadingId(null);
@@ -1019,6 +1021,11 @@ export default function App() {
   };
 
   // -- Admin Actions --
+  const handleUpdateGpsRadius = async (metres) => {
+    const raceRef = doc(db, "artifacts", appId, "public", "data", "races", raceCode);
+    await updateDoc(raceRef, { gpsRadius: metres });
+  };
+
   const handleToggleCheckInMethod = async (newMethod) => {
     const raceRef = doc(db, "artifacts", appId, "public", "data", "races", raceCode);
     await updateDoc(raceRef, { checkInMethod: newMethod });
@@ -1741,8 +1748,24 @@ export default function App() {
                       </button>
                   </div>
                   <div className="mt-3 text-xs text-stone-500">
-                      {raceConfig?.checkInMethod === 'QR' ? "Users must scan QR codes placed at locations." : "Users must be physically within 30m of coordinates."}
+                      {raceConfig?.checkInMethod === 'QR' ? "Users must scan QR codes placed at locations." : `Users must be within ${raceConfig?.gpsRadius || GPS_RADIUS_METERS}m of coordinates.`}
                   </div>
+                  {raceConfig?.checkInMethod !== 'QR' && (
+                    <div className="mt-4">
+                      <label className="text-xs font-bold text-stone-400 uppercase tracking-widest">GPS Check-in Radius</label>
+                      <div className="flex gap-2 mt-2">
+                        {[30, 50, 100, 200].map((m) => (
+                          <button
+                            key={m}
+                            onClick={() => handleUpdateGpsRadius(m)}
+                            className={`flex-1 py-2 text-sm font-bold rounded-lg border transition-all ${(raceConfig?.gpsRadius || GPS_RADIUS_METERS) === m ? 'bg-stone-900 text-white border-stone-900' : 'bg-white text-stone-500 border-stone-200 hover:border-stone-400'}`}
+                          >
+                            {m}m
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
               </div>
 
               <div className="space-y-4">
