@@ -808,7 +808,7 @@ export default function App() {
         backgroundUrl: createForm.bgUrl || "background_image.jpg",
         logoUrl: createForm.logoUrl || "image.jpg",
         checkInMethod: "GPS", 
-        teamsList: ["Team A", "Team B"],
+        teamsList: ["The Anderson Amblers", "The Porteous Patrollers"],
         checkpointsList: DEFAULT_CHECKPOINTS,
         createdAt: new Date(),
       });
@@ -1108,7 +1108,7 @@ export default function App() {
 
       const raceRef = doc(db, "artifacts", appId, "public", "data", "races", raceCode);
       await updateDoc(raceRef, {
-        teamsList: ["Team A", "Team B"],
+        teamsList: ["The Anderson Amblers", "The Porteous Patrollers"],
         checkpointsList: DEFAULT_CHECKPOINTS,
       });
 
