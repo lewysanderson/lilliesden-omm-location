@@ -1251,8 +1251,7 @@ export default function App() {
             allRaces.map((race) => (
               <div key={race.id} className="bg-stone-800 p-4 rounded-xl border border-stone-700 flex justify-between items-center">
                 <div>
-                  <div className="text-white font-bold text-lg">{race.raceName}</div>
-                  <div className="text-stone-400 text-sm font-mono">Code: {race.id}</div>
+                  <div className="text-white font-bold text-lg">{race.id} <span className="text-stone-400 font-normal">({race.raceName})</span></div>
                   <div className="text-stone-500 text-xs mt-1">
                     Created: {race.createdAt ? new Date(race.createdAt.seconds * 1000).toLocaleDateString() : "Unknown"}
                   </div>
@@ -1399,8 +1398,7 @@ export default function App() {
             <img src={raceConfig?.logoUrl || "image.jpg"} alt="logo" className="absolute inset-0 w-full h-full object-cover" />
           </div>
           <div className="space-y-1">
-            <h1 className="text-4xl font-black text-white tracking-tight drop-shadow-lg">{raceConfig?.raceName}</h1>
-            <div className="text-white/60 font-mono text-sm tracking-widest">CODE: {raceCode}</div>
+            <h1 className="text-4xl font-black text-white tracking-tight drop-shadow-lg">{raceCode} <span className="text-white/70 text-2xl font-bold">({raceConfig?.raceName})</span></h1>
           </div>
           <form onSubmit={handleIdentityLogin} className="space-y-4 pt-4 bg-white/10 p-6 rounded-3xl border border-white/20 backdrop-blur-md shadow-2xl">
             <div className="space-y-2 text-left">
