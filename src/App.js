@@ -10,7 +10,8 @@ import {
   signOut,
 } from "firebase/auth";
 import {
-  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
   collection,
   doc,
   setDoc,
@@ -20,7 +21,6 @@ import {
   increment,
   getDocs,
   writeBatch,
-  enableIndexedDbPersistence,
 } from "firebase/firestore";
 
 // --- Icon Components ---
@@ -492,7 +492,10 @@ try {
 }
 
 const auth = getAuth(app);
-const db = getFirestore(app);
+// persistentLocalCache enables full offline support (IndexedDB) — no separate call needed
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache(),
+});
 const appId = "lomond-omm";
 
 // --- Helper Functions ---
@@ -693,11 +696,6 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        try {
-          await enableIndexedDbPersistence(db);
-        } catch (err) {
-          console.log("Persistence likely already enabled or multi-tab error", err);
-        }
         await setPersistence(auth, browserLocalPersistence);
         await signInAnonymously(auth);
       } catch (err) {
@@ -913,12 +911,14 @@ export default function App() {
     // Safety check
     if (!checkpoint) {
        setScanResult({ status: "error", message: "Invalid Checkpoint ID detected." });
+       logAttempt(cpId, "Unknown checkpoint ID", userCoords);
        return;
     }
 
     // Check duplication
     if (myTeamData?.scanned?.includes(cpId)) {
         setScanResult({ status: "error", message: `Already checked in at ${checkpoint.name}!` });
+        logAttempt(cpId, "Already checked in", userCoords);
         return;
     }
 
@@ -996,11 +996,13 @@ export default function App() {
             status: "error",
             message: `Too far! You are ${rounded}m away (need to be within ${radius}m).`,
           });
+          logAttempt(cpId, `Too far — ${rounded}m away (limit ${radius}m)`, position.coords, { distanceMetres: rounded });
         }
         setGpsLoadingId(null);
       },
       (err) => {
         setScanResult({ status: "error", message: "GPS Error. Allow permissions." });
+        logAttempt(cpId, `GPS error: ${err.message || err.code}`, null);
         setGpsLoadingId(null);
       },
       { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
@@ -1026,6 +1028,7 @@ export default function App() {
           performCheckIn(matchingCp.id, "QR", userCoords);
       } else {
           setScanResult({ status: 'error', message: `Unknown QR Code: ${decodedText}`});
+          logAttempt(decodedText, `Unknown QR code scanned: ${decodedText}`, null);
       }
       setScanningCpId(null);
   };
@@ -1033,6 +1036,31 @@ export default function App() {
   const startQrScanner = (targetCpId = null) => {
       setScanningCpId(targetCpId);
       setShowQrScanner(true);
+  };
+
+  // -- Attempt Logging --
+  const logAttempt = async (cpId, reason, userCoords = null, extra = {}) => {
+    if (!teamName) return;
+    try {
+      const teamRef = doc(db, "artifacts", appId, "public", "data", "races", raceCode, "teams", teamName);
+      const now = new Date();
+      await updateDoc(teamRef, {
+        attemptLog: arrayUnion({
+          cpId,
+          cpName: checkpoints.find((c) => c.id === cpId)?.name || cpId,
+          reason,
+          timestamp: now.toISOString(),
+          date: now.toLocaleDateString("en-GB"),
+          time: now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          userLat: userCoords ? userCoords.latitude : null,
+          userLng: userCoords ? userCoords.longitude : null,
+          userAccuracy: userCoords ? Math.round(userCoords.accuracy) : null,
+          ...extra,
+        }),
+      });
+    } catch (err) {
+      console.error("Failed to log attempt:", err);
+    }
   };
 
   // -- Admin Actions --
@@ -1629,6 +1657,27 @@ ${waypoints}
                     </div>
                   ))
               )}
+              {/* Failed Attempts (admin only) */}
+              {isAdmin && selectedTeamDetail.attemptLog?.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3 px-1">Failed Attempts ({selectedTeamDetail.attemptLog.length})</div>
+                  <div className="space-y-2">
+                    {[...selectedTeamDetail.attemptLog]
+                      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                      .map((attempt, i) => (
+                        <div key={i} className="flex gap-3 items-start">
+                          <div className="flex-shrink-0 mt-1 w-4 h-4 rounded-full bg-red-400 border-2 border-red-100"></div>
+                          <div className="flex-1 bg-red-50 p-3 rounded-xl border border-red-100">
+                            <div className="font-bold text-stone-700 text-sm">{attempt.cpName || attempt.cpId}</div>
+                            <div className="text-xs text-red-500 mt-0.5">{attempt.reason}</div>
+                            <div className="text-xs text-stone-400 font-mono mt-0.5">{attempt.date} {attempt.time}</div>
+                            {attempt.userLat && <div className="text-[10px] text-stone-400 font-mono mt-0.5">{Number(attempt.userLat).toFixed(6)}, {Number(attempt.userLng).toFixed(6)}{attempt.userAccuracy ? ` ±${attempt.userAccuracy}m` : ""}</div>}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1648,6 +1697,13 @@ ${waypoints}
               <h3 className="text-2xl font-black text-stone-800 mb-2">{scanResult.status === "success" ? `+${scanResult.points} pts` : "Alert"}</h3>
               <p className="text-stone-500 font-medium mb-6">{scanResult.message}</p>
               
+              {/* Offline sync note */}
+              {scanResult.status === "success" && !isOnline && (
+                <div className="bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold px-3 py-2 rounded-xl mb-4 flex items-center gap-2">
+                  <WifiOffIcon className="w-3 h-3 flex-shrink-0" /> Saved locally — will sync when back online
+                </div>
+              )}
+
               {/* Display Clue if present */}
               {scanResult.status === "success" && scanResult.clue && (
                   <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6 text-left relative">
@@ -1693,6 +1749,13 @@ ${waypoints}
             </div>
           )}
         </div>
+
+        {/* Offline Banner */}
+        {!isOnline && (
+          <div className="bg-amber-500 text-white text-xs font-bold px-4 py-2 flex items-center justify-center gap-2 z-20">
+            <WifiOffIcon className="w-3 h-3" /> Offline — check-ins are saved locally and will sync when you reconnect
+          </div>
+        )}
 
         {/* Main */}
         <main className="flex-1 overflow-y-auto px-4 pb-32 pt-6 space-y-6">
