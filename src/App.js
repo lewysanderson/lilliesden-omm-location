@@ -907,15 +907,15 @@ export default function App() {
   };
 
   // -- SHARED CHECK IN LOGIC --
-  const performCheckIn = async (cpId, method) => {
+  const performCheckIn = async (cpId, method, userCoords = null) => {
     const checkpoint = checkpoints.find((c) => c.id === cpId);
-    
+
     // Safety check
     if (!checkpoint) {
        setScanResult({ status: "error", message: "Invalid Checkpoint ID detected." });
        return;
     }
-    
+
     // Check duplication
     if (myTeamData?.scanned?.includes(cpId)) {
         setScanResult({ status: "error", message: `Already checked in at ${checkpoint.name}!` });
@@ -925,16 +925,24 @@ export default function App() {
     try {
         const teamRef = doc(db, "artifacts", appId, "public", "data", "races", raceCode, "teams", teamName);
         const points = parseInt(checkpoint.points, 10) || 0;
+        const now = new Date();
 
         await updateDoc(teamRef, {
             score: increment(points),
             scanned: arrayUnion(cpId),
             scanHistory: arrayUnion({
-            id: cpId,
-            name: checkpoint.name,
-            points: points,
-            timestamp: new Date().toISOString(),
-            method: method,
+              id: cpId,
+              name: checkpoint.name,
+              points: points,
+              timestamp: now.toISOString(),
+              date: now.toLocaleDateString("en-GB"),
+              time: now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+              method: method,
+              cpLat: parseFloat(checkpoint.lat) || null,
+              cpLng: parseFloat(checkpoint.lng) || null,
+              userLat: userCoords ? userCoords.latitude : null,
+              userLng: userCoords ? userCoords.longitude : null,
+              userAccuracy: userCoords ? Math.round(userCoords.accuracy) : null,
             }),
             lastUpdated: new Date(),
         });
@@ -981,7 +989,7 @@ export default function App() {
 
         const radius = raceConfig?.gpsRadius || GPS_RADIUS_METERS;
         if (dist <= radius) {
-          await performCheckIn(cpId, "GPS");
+          await performCheckIn(cpId, "GPS", position.coords);
         } else {
           const rounded = Math.round(dist);
           setScanResult({
@@ -1000,15 +1008,22 @@ export default function App() {
   };
 
   // -- QR CHECKIN --
-  const handleQrScan = (decodedText) => {
-      // Close scanner first
+  const handleQrScan = async (decodedText) => {
       setShowQrScanner(false);
-      
-      // Look for a checkpoint with this ID
       const matchingCp = checkpoints.find(c => c.id === decodedText);
-      
       if (matchingCp) {
-          performCheckIn(matchingCp.id, "QR");
+          // Try to capture GPS position for logging (3s timeout, non-blocking)
+          let userCoords = null;
+          try {
+              userCoords = await new Promise((resolve) => {
+                  navigator.geolocation.getCurrentPosition(
+                      (pos) => resolve(pos.coords),
+                      () => resolve(null),
+                      { enableHighAccuracy: true, timeout: 3000, maximumAge: 5000 }
+                  );
+              });
+          } catch (e) { /* GPS unavailable — proceed without */ }
+          performCheckIn(matchingCp.id, "QR", userCoords);
       } else {
           setScanResult({ status: 'error', message: `Unknown QR Code: ${decodedText}`});
       }
@@ -1162,6 +1177,45 @@ export default function App() {
     if (!isoString) return "";
     const date = new Date(isoString);
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
+
+  const formatDateTime = (isoString) => {
+    if (!isoString) return "";
+    const date = new Date(isoString);
+    return date.toLocaleDateString("en-GB") + " " + date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
+
+  const exportGpx = (team) => {
+    const scans = [...(team.scanHistory || [])].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const waypoints = scans.map((scan) => {
+      const lat = scan.userLat ?? scan.cpLat;
+      const lng = scan.userLng ?? scan.cpLng;
+      if (!lat || !lng) return "";
+      return `  <wpt lat="${lat}" lon="${lng}">
+    <time>${scan.timestamp}</time>
+    <name>${scan.name}</name>
+    <desc>${scan.points} pts | ${scan.method} | ${scan.date || ""} ${scan.time || ""}${scan.userAccuracy ? ` | ±${scan.userAccuracy}m` : ""}</desc>
+  </wpt>`;
+    }).filter(Boolean).join("\n");
+
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Lomond OMM" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${team.name} — ${raceConfig?.raceName || ""} (${raceCode})</name>
+    <time>${new Date().toISOString()}</time>
+  </metadata>
+${waypoints}
+</gpx>`;
+
+    const blob = new Blob([gpx], { type: "application/gpx+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${team.name.replace(/\s+/g, "_")}_${raceCode}.gpx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   // --- Views ---
@@ -1538,6 +1592,14 @@ export default function App() {
                     <div className="text-2xl font-black text-blue-100">{selectedTeamDetail.scanned?.length || 0}</div>
                   </div>
                 </div>
+                {selectedTeamDetail.scanHistory?.length > 0 && (
+                  <button
+                    onClick={() => exportGpx(selectedTeamDetail)}
+                    className="mt-4 bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 mx-auto hover:bg-emerald-700 transition"
+                  >
+                    <NavigationIcon className="w-3 h-3" /> Export GPX
+                  </button>
+                )}
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -1556,9 +1618,10 @@ export default function App() {
                         <div className="flex justify-between items-start">
                           <div>
                             <div className="font-bold text-stone-800">{scan.name || "Unknown"}</div>
-                            <div className="text-xs text-stone-400 font-mono mt-1">{formatTime(scan.timestamp)}</div>
+                            <div className="text-xs text-stone-400 font-mono mt-1">{formatDateTime(scan.timestamp)}</div>
                             {scan.method === "GPS" && <div className="text-[10px] text-blue-400 font-bold uppercase mt-1">GPS Check-in</div>}
                             {scan.method === "QR" && <div className="text-[10px] text-purple-400 font-bold uppercase mt-1">QR Scan</div>}
+                            {scan.userLat && <div className="text-[10px] text-stone-400 font-mono mt-0.5">{Number(scan.userLat).toFixed(6)}, {Number(scan.userLng).toFixed(6)}{scan.userAccuracy ? ` ±${scan.userAccuracy}m` : ""}</div>}
                           </div>
                           <div className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-1 rounded-lg">+{scan.points}</div>
                         </div>
